@@ -1,7 +1,7 @@
 import { pad } from './format';
 import type {
   AdminReservation, ParkingSlot, PartnerStore, PlainStore, PublicLot,
-  Reservation, Review, SlotStatus, StoreTable, TableStatus,
+  Reservation, Review, SlotStatus, StoreTable, TableStatus, Profile
 } from './types';
 
 /**
@@ -215,7 +215,7 @@ export const INITIAL_RESERVATIONS: Reservation[] = [
     status: 'done', name: '김대전', phone: '010-2211-1234', memo: '', exited: true, receipt: true, reviewed: false },
 ];
 
-export const ME = { name: '김대전', phone: '010-2211-1234', car: '31가 5678', carType: '중형' };
+export const ME: Profile = { name: '김대전', phone: '010-2211-1234', car: '31가 5678', carType: '중형' };
 
 /* ── 관리자 데이터 ──────────────────────────────────────── */
 
