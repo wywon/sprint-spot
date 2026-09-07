@@ -1,3 +1,7 @@
+# 이슈목록 문서
+- [링크](https://github.com/wywon/Team-Project-Sprint/wiki/%EC%9D%B4%EC%8A%88%ED%85%8C%EC%9D%B4%EB%B8%94(5%EC%A3%BC-%EB%B6%84%EC%97%85%ED%91%9C-%EC%95%84%ED%8B%B0%ED%8C%A9%ED%8A%B8))
+- 작업목록은 여기서 확인하기
+
 # SPOT
 
 > 대전 원도심 입점 식당의 **실시간 좌석·예약**과 **주차면 센서 기반 실시간 주차**를 한 앱에서 확인하는 서비스

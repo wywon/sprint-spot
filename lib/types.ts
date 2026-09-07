@@ -170,3 +170,13 @@ export interface LogEntry {
   msg: string;
   tone: 'ok' | 'warn' | 'busy' | 'brand' | 'off';
 }
+
+//프로필 수정에 사용하는 profile 객체 생성 store.tsx에 선언한 ME 객체에 맞춤
+export type CarType = '경차' | '중형' | '대형' | '전기차';
+
+export interface Profile {
+  name: string;
+  phone: string;
+  car: string;
+  carType: CarType;
+}

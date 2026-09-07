@@ -4,11 +4,11 @@ import React, { createContext, useCallback, useContext, useEffect, useState } fr
 import { CLEAN_AUTO_MS } from './tokens';
 import { fmtTime, rnd } from './format';
 import {
-  ADMIN_RES, INITIAL_RESERVATIONS, PARTNER_STORES, PUBLIC_LOTS, REVIEWS,
+  ADMIN_RES, INITIAL_RESERVATIONS, PARTNER_STORES, PUBLIC_LOTS, REVIEWS, ME
 } from './mock';
 import type {
-  AdminReservation, LogEntry, ParkingSlot, PartnerStore, PublicLot,
-  Reservation, Review, SensorState, StoreTable, Toast,
+  AdminReservation, LogEntry, ParkingSlot, PartnerStore, Profile, PublicLot,
+  Reservation, Review, SensorState, StoreTable, Toast, 
 } from './types';
 
 /**
@@ -42,6 +42,8 @@ interface SpotApi {
   simOn: boolean;
   toasts: Toast[];
   log: LogEntry[];
+  profile: Profile;
+  
 
   setSimOn: (v: boolean) => void;
   setRecent: React.Dispatch<React.SetStateAction<string[]>>;
@@ -64,6 +66,8 @@ interface SpotApi {
   setTables: (storeId: string, tables: StoreTable[], log?: LogInput) => void;
   setSensor: (storeId: string, sensor: SensorState) => void;
   setAdminRes: React.Dispatch<React.SetStateAction<AdminReservation[]>>;
+
+  updateProfile: (next: Profile) => void;
 }
 
 const SpotCtx = createContext<SpotApi | null>(null);
@@ -103,6 +107,7 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
   const [simOn, setSimOn] = useState(true);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [log, setLog] = useState<LogEntry[]>([]);
+  const [profile, setProfile] = useState<Profile>(ME); //서버 렌더링 시 ME 객체 고정
 
   /* 마운트 직후 한 번 — 시각 관련 값을 실제 시간으로 채운다 */
   useEffect(() => {
@@ -121,6 +126,10 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
       { t: now - 260000, who: '최영호', msg: 'A3 수동 지정 → 주차 가능', tone: 'warn' },
       { t: now - 480000, who: '시스템', msg: '게이트웨이 재연결 완료', tone: 'ok' },
     ]);
+    try {
+      const saved = localStorage.getItem('spot.profile');
+      if (saved) setProfile({ ...ME, ...JSON.parse(saved)});
+    }catch {}
     setMounted(true);
   }, []);
 
@@ -132,6 +141,11 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
 
   const addLog = useCallback((who: string, msg: string, tone: LogEntry['tone']) => {
     setLog((p) => [{ t: Date.now(), who, msg, tone }, ...p].slice(0, 40));
+  }, []);
+
+    const updateProfile = useCallback((next: Profile) => {
+    setProfile(next);
+    try { localStorage.setItem('spot.profile', JSON.stringify(next)); } catch {}
   }, []);
 
   /* ── 실시간 시뮬레이터 ──────────────────────────────────
@@ -212,8 +226,8 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
   }, [mounted]);
 
   const api: SpotApi = {
-    mounted, stores, lots, reservations, adminRes, reviews, favorites, recent, simOn, toasts, log,
-    setSimOn, setRecent, pushToast, addLog, setAdminRes,
+    mounted, stores, lots, reservations, adminRes, reviews, favorites, recent, simOn, toasts, log, profile,
+    setSimOn, setRecent, pushToast, addLog, setAdminRes, updateProfile,
 
     getStore: (id) => stores.find((s) => s.id === id),
     getLot:   (id) => lots.find((l) => l.id === id),
