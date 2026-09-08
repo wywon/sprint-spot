@@ -7,7 +7,7 @@ import { cx } from '@/lib/format';
 // import { ME } from '@/lib/mock';
 import { useApp } from '@/lib/store';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
+
 /**
  * 마이페이지
  * ─────────────────────────────────────────────────────────────
@@ -41,7 +41,7 @@ export default function MyPage() {
             <div className="text-[12.5px] font-bold text-ink-500 tnum">{profile.phone}</div>
           </div>
           <Button variant="outline" size="sm" icon="pencil"
-            onClick={() => router.push('/my/edit')}>프로필 수정</Button>
+            onClick={()=> router.push('/my/edit')}>프로필 수정</Button>
         </div>
 
         <div className="grid grid-cols-3 gap-2 mt-4">
@@ -60,15 +60,15 @@ export default function MyPage() {
           <div className="flex items-center justify-between mb-3">
             <div className="text-[13px] font-extrabold text-ink-900">차량 정보</div>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-xl bg-brand-50 grid place-items-center text-brand-600 shrink-0">
-              <Icon n="car" s={21} />
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl bg-brand-50 grid place-items-center text-brand-600 shrink-0">
+                <Icon n="car" s={21} />
+              </div>
+              <div className="grow">
+                <div className="text-[14.5px] font-extrabold text-ink-900 tnum">{profile.car}</div>
+                <div className="text-[11.5px] font-bold text-ink-500">{profile.carType}</div>
+              </div>
             </div>
-            <div className="grow">
-              <div className="text-[14.5px] font-extrabold text-ink-900 tnum">{profile.car}</div>
-              <div className="text-[11.5px] font-bold text-ink-500">{profile.carType}</div>
-            </div>
-          </div>
           <div className="mt-3 rounded-xl bg-ink-50 px-3 py-2.5 flex items-start gap-2">
             <Icon n="question" s={14} cls="text-ink-400 shrink-0 mt-0.5" />
             <span className="text-[11px] font-medium text-ink-600 leading-relaxed">
@@ -95,30 +95,13 @@ export default function MyPage() {
 
         {/* 배치만 — 4주차 이후 채운다 */}
         <Card className="p-1">
-          {([
-            ['history', '최근 본 매장', 'my/recent'],
-            ['settings', '앱 설정', null],
-            ['sparkle', '접근성', null]] as const).map(([i, t, href]) => {
-              const cls =
-                'w-full flex items-center gap-3 px-3.5 py-3.5 hover:bg-ink-50 rounded-xl transition-colors';
-              const inner = (
-                <>
-                  <Icon n={i} s={19} cls="text-ink-400 shrink-0" />
-                  <div className="grow text-left text-[13.5px] font-bold text-ink-800">{t}</div>
-                  <Icon n="chevR" s={16} cls="text-ink-300 shrink-0" />
-                </>
-              );
-
-              return href ? (
-                <Link key={t} href={href} className={cls}>
-                  {inner}
-                </Link>
-              ) : (
-                <button key={t} type="button" className={cls}>
-                  {inner}
-                </button>
-              );
-            })}
+          {([['history', '최근 본 매장'], ['settings', '앱 설정'], ['sparkle', '접근성']] as const).map(([i, t]) => (
+            <button key={t} className="w-full flex items-center gap-3 px-3.5 py-3.5 hover:bg-ink-50 rounded-xl transition-colors">
+              <Icon n={i} s={19} cls="text-ink-400 shrink-0" />
+              <div className="grow text-left text-[13.5px] font-bold text-ink-800">{t}</div>
+              <Icon n="chevR" s={16} cls="text-ink-300 shrink-0" />
+            </button>
+          ))}
         </Card>
 
         {/* 시뮬레이션 토글 */}
