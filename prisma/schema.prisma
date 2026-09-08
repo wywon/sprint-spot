@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
+  provider = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
@@ -92,7 +92,6 @@ model Store {
   reservations Reservation[]
   reviewList   Review[] // ★ 관계 필드. 위 reviews(Int) 와 이름이 겹치면 안 된다
   logs         ActivityLog[]
-  sensorLogs   SensorLog[]
 
   @@index([partner])
 }
@@ -111,8 +110,6 @@ model ParkingSlot {
 
   /// 센서(D)만 쓴다
   autoStatus   SlotStatus  @default(unknown)
-  /// 센서가 이 면을 마지막으로 보고한 시각. 60초 넘으면 화면이 offline 으로 그린다
-  lastSeenAt   DateTime?
   /// 관리자(B)만 쓴다
   manualStatus SlotStatus?
   /// 지나면 자동으로 센서 값으로 돌아간다
@@ -265,24 +262,4 @@ model ActivityLog {
   store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
   @@index([storeId, at])
-}
-
-/**
- * — 센서 감지 로그 ——————————————————
- * 관리자 '센서 감지·변경 로그' 화면이 읽는다.
- * POST /api/detect 가 값을 받을 때마다 한 줄씩 쌓는다.
- */
-model SensorLog {
-  id         String     @id @default(cuid())
-  storeId    String
-  /// 'A1' — ParkingSlot.code
-  slotCode   String
-  status     SlotStatus
-  /// 센서가 감지한 시각 (D가 보낸 값, 없으면 서버 도착 시각)
-  detectedAt DateTime
-  createdAt  DateTime   @default(now())
-
-  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
-
-  @@index([storeId, createdAt])
 }
