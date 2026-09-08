@@ -43,9 +43,28 @@ export async function POST(
       )
     }
 
+    // 취소 가능한 상태는 'upcoming' 하나뿐이다.
+    // 나머지는 각각 다른 이유이므로 메시지를 나눈다.
     if (res.status === 'canceled') {
       return NextResponse.json(
         { error: 'ALREADY_CANCELLED', message: '이미 취소된 예약이에요.' },
+        { status: 409 },
+      )
+    }
+
+    if (res.status === 'noshow') {
+      return NextResponse.json(
+        {
+          error: 'ALREADY_NOSHOW',
+          message: '방문하지 않은 예약으로 처리되었어요. 매장으로 연락해 주세요.',
+        },
+        { status: 409 },
+      )
+    }
+
+    if (res.status === 'seated' || res.status === 'done') {
+      return NextResponse.json(
+        { error: 'ALREADY_VISITED', message: '이미 방문한 예약이에요.' },
         { status: 409 },
       )
     }
@@ -61,10 +80,19 @@ export async function POST(
       )
     }
 
-    const updated = await prisma.reservation.update({
-      where: { id },
+    // updateMany + status 조건 — 읽은 뒤 쓰기 전 사이에
+    // 자동 미방문 스윕이 상태를 바꿨다면 여기서 0건이 되어 덮어쓰지 않는다
+    const updated = await prisma.reservation.updateMany({
+      where: { id, status: 'upcoming' },
       data: { status: 'canceled' },
     })
+
+    if (updated.count === 0) {
+      return NextResponse.json(
+        { error: 'STATUS_CHANGED', message: '예약 상태가 변경되어 취소할 수 없어요.' },
+        { status: 409 },
+      )
+    }
 
     await prisma.activityLog.create({
       data: {
@@ -76,8 +104,8 @@ export async function POST(
     })
 
     return NextResponse.json({
-      id: updated.id,
-      status: updated.status,
+      id,
+      status: 'canceled',
       cancelledAt: Date.now(),
     }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (e) {
