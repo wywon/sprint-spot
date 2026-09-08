@@ -1,14 +1,16 @@
 'use client';
 
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { CLEAN_AUTO_MS } from './tokens';
-import { fmtTime, rnd } from './format';
+import { rnd } from './format';
+import { adaptStore, adaptStoreDetail, type ApiStoreDetail, type ApiStoreListItem } from './adapt';
 import {
   ADMIN_RES, INITIAL_RESERVATIONS, PARTNER_STORES, PUBLIC_LOTS, REVIEWS, ME
 } from './mock';
 import type {
   AdminReservation, LogEntry, ParkingSlot, PartnerStore, Profile, PublicLot,
-  Reservation, Review, SensorState, StoreTable, Toast, 
+  Reservation, Review, SensorState, StoreTable, TableStatus, Toast,
 } from './types';
 
 /**
@@ -17,16 +19,95 @@ import type {
  * MVP에서는 상태 관리 라이브러리를 쓰지 않는다. Context 하나로 충분하고,
  * 비전공자 팀에게는 Redux/Zustand 학습 비용이 더 크다.
  *
- * ★ 4주차 교체 지점
- *   여기서 setStores(...) 를 호출하는 자리를
- *   fetch('/api/admin/tables/...', {method:'PATCH'}) → 응답으로 갱신
- *   으로 바꾸면 그대로 실서비스가 된다. 화면 코드는 손대지 않는다.
+ * [C15] 시뮬레이터 → 3초 폴링 교체 완료.
+ *   화면 41개는 한 줄도 고치지 않았다. 바꾼 건 이 파일 안쪽뿐이다.
+ *
+ *   읽기 — 2단 폴링
+ *     · GET /api/stores          목록. 항상 3초
+ *     · GET /api/stores/[id]     지금 보고 있는 매장 1개만. 3초
+ *     목록 응답에는 tables[] · slots[] 이 없어서 배치도를 못 그린다. 그래서 두 단이다.
+ *     전 매장 상세를 다 돌리면 Vercel Hobby 함수 호출이 매장 수만큼 배로 는다.
+ *
+ *   쓰기 — 낙관적 반영 후 PATCH
+ *     화면을 먼저 바꾸고 서버에 보낸다. 실패해도 되돌리는 코드를 두지 않고,
+ *     즉시 다시 읽어서 서버 값으로 맞춘다. 서버가 진실이다.
  *
  * ★ Hydration 주의
- *   목업의 timestamp 는 전부 0으로 시작한다. 서버 렌더링 시점에 Date.now() 를
- *   쓰면 서버와 브라우저 값이 달라져서 Next.js 가 hydration 에러를 낸다.
- *   그래서 마운트된 뒤(useEffect)에 한 번 시각을 채워 넣는다.
+ *   fetch 와 Date.now() 는 전부 useEffect 안에서만 부른다.
  */
+
+/** 폴링 주기. 3초면 체감상 실시간이고 WebSocket 학습 비용이 0이다 */
+const POLL_MS = 3000;
+
+/** 관리자 콘솔은 매장 한 곳만 본다 (점주 계정 = s1) */
+const ADMIN_STORE_ID = 's1';
+
+/* ── PATCH 요청 body ─────────────────────────────────────────
+   ★ 서버 규격에 맞추는 지점. 라우트가 바뀌면 이 아래 두 함수만 고치면 된다. */
+
+/**
+ * 테이블 — PATCH /api/admin/tables/[id] 는 status 가 아니라 action(동사) 을 받는다.
+ * 서버가 전이표를 들고 있고, 허용되지 않는 동작은 409 로 막는다.
+ * 노트북 두 대에서 동시에 누르는 상황을 서버가 걸러 주는 구조다.
+ * 그래서 "지금 상태 → 바꾸려는 상태" 를 보고 동사를 되짚어야 한다.
+ */
+type TableAction = 'seat' | 'leave' | 'cleaned' | 'cancel' | 'noshow' | 'disable' | 'enable';
+
+function toTableAction(from: TableStatus | undefined, patch: Partial<StoreTable>): TableAction | null {
+  const to = patch.status;
+  if (!from || !to || from === to) return null;   // 상태가 안 바뀌는 patch 는 서버에 안 보낸다
+
+  if (to === 'occupied' && (from === 'available' || from === 'reserved')) return 'seat';
+  if (to === 'cleaning' && from === 'occupied') return 'leave';
+  if (to === 'disabled' && from === 'available') return 'disable';
+
+  if (to === 'available') {
+    if (from === 'cleaning') return 'cleaned';
+    if (from === 'disabled') return 'enable';
+    // ★ reserved → available 은 '취소'와 '미방문' 두 갈래다. 화면이 구분해서 알려주지
+    //   않으므로 '취소'로 보낸다. v3에서 홀 운영 버튼이 '노쇼'→'취소'로 바뀌었고,
+    //   10분 경과 자동 미방문은 서버가 따로 처리한다(B 담당 feat/b-auto-noshow).
+    if (from === 'reserved') return 'cancel';
+  }
+
+  return null;
+}
+
+/**
+ * 주차면 — PATCH /api/admin/slots/[id] 는 만료 '시각'이 아니라 '분'을 받는다.
+ * manualStatus 키가 없으면 400 이므로 항상 포함시킨다.
+ * null 을 보내면 수동 지정 해제(자동 감지 복귀)다.
+ */
+function toSlotBody(patch: Partial<ParkingSlot>): Record<string, unknown> | null {
+  if (!('manualStatus' in patch)) return null;    // 수동 지정과 무관한 patch 는 안 보낸다
+
+  const manualStatus = patch.manualStatus ?? null;
+  if (manualStatus === null) return { manualStatus: null };
+
+  // 서버가 받는 값은 available · occupied 둘뿐이다 (unknown 은 센서 몫)
+  if (manualStatus !== 'available' && manualStatus !== 'occupied') return null;
+
+  const until = patch.manualUntil;
+  const minutes = typeof until === 'number'
+    ? Math.max(1, Math.round((until - Date.now()) / 60_000))
+    : 120;                                        // 기본 2시간
+
+  return { manualStatus, minutes };
+}
+
+/** URL 만 보고 "지금 보고 있는 매장"을 알아낸다. 화면이 알려줄 필요가 없다 */
+function focusStoreId(pathname: string | null, reservations: Reservation[]): string | null {
+  if (!pathname) return null;
+  if (pathname.startsWith('/admin')) return ADMIN_STORE_ID;
+
+  const m = pathname.match(/^\/(?:stores|reserve)\/([^/]+)/);
+  if (m) return m[1];
+
+  const r = pathname.match(/^\/reservations\/([^/]+)/);
+  if (r) return reservations.find((x) => x.id === r[1])?.storeId ?? null;
+
+  return null;
+}
 
 interface LogInput { who: string; msg: string; tone: LogEntry['tone'] }
 
@@ -43,7 +124,13 @@ interface SpotApi {
   toasts: Toast[];
   log: LogEntry[];
   profile: Profile;
-  
+
+  /** [C15] 서버에서 한 번이라도 받아왔는가. false 면 아직 목업을 보고 있다 */
+  live: boolean;
+  /** [C15] 마지막으로 성공한 갱신 시각(ms). 0 이면 아직 모른다 */
+  lastSync: number;
+  /** [C15] 즉시 한 번 더 읽기 */
+  refresh: () => void;
 
   setSimOn: (v: boolean) => void;
   setRecent: React.Dispatch<React.SetStateAction<string[]>>;
@@ -104,10 +191,21 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
   const [reviews, setReviews] = useState<Review[]>(REVIEWS);
   const [favorites, setFav] = useState<string[]>(['s1']);
   const [recent, setRecent] = useState<string[]>(['대흥동 손칼국수', '두부두루치기', '으능정이 주차장', '소제동 브런치']);
-  const [simOn, setSimOn] = useState(true);
+  const [simOn, setSimOn] = useState(true);   // [C15] 이제 '실시간 갱신 켜기' 를 뜻한다
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [profile, setProfile] = useState<Profile>(ME); //서버 렌더링 시 ME 객체 고정
+
+  const [live, setLive] = useState(false);
+  const [lastSync, setLastSync] = useState(0);
+
+  const pathname = usePathname();
+  const focusId = useMemo(() => focusStoreId(pathname, reservations), [pathname, reservations]);
+
+  /** 폴링 루프를 즉시 한 바퀴 더 돌리는 손잡이 */
+  const refreshRef = useRef<() => void>(() => {});
+  /** 연결 끊김 토스트를 한 번만 띄우기 위한 표시 */
+  const warnedRef = useRef(false);
 
   /* 마운트 직후 한 번 — 시각 관련 값을 실제 시간으로 채운다 */
   useEffect(() => {
@@ -148,48 +246,97 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
     try { localStorage.setItem('spot.profile', JSON.stringify(next)); } catch {}
   }, []);
 
-  /* ── 실시간 시뮬레이터 ──────────────────────────────────
-     4주차에 이 useEffect 를 통째로 지우고 폴링(usePolling)으로 바꾼다. */
+  /* ── 3초 폴링 ────────────────────────────────────────────────
+     setInterval 을 쓰지 않는다. 응답이 3초보다 늦으면 요청이 겹쳐 쌓이기 때문에,
+     한 바퀴가 끝난 뒤에 다음 바퀴를 예약하는 방식(setTimeout 재귀)으로 만든다. */
   useEffect(() => {
     if (!mounted || !simOn) return;
 
-    const a = setInterval(() => {               // 주차면 센서 3.5초
-      setStores((prev) =>
-        prev.map((s) => {
-          if (s.sensor === 'offline') return s;
-          const slots = [...s.parking.slots];
-          const i = rnd(0, slots.length - 1);
-          const sl = slots[i];
-          if (sl.manualStatus && sl.manualUntil && sl.manualUntil > Date.now()) return s;
-          if (sl.type === 'disabled') return s;
-          const r = Math.random();
-          const nx = r < 0.45 ? 'available' : r < 0.93 ? 'occupied' : 'unknown';
-          if (nx === sl.autoStatus) return s;
-          slots[i] = { ...sl, autoStatus: nx, confidence: nx === 'unknown' ? 0.42 : 0.97 };
-          return { ...s, parking: { ...s.parking, slots, updated: Date.now() } };
-        })
-      );
-    }, 3500);
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const ac = new AbortController();
 
-    const b = setInterval(() => {               // 좌석 5초
-      setStores((prev) =>
-        prev.map((s) => {
-          const t = [...s.tables];
-          const i = rnd(0, t.length - 1);
-          const tb = t[i];
-          if (tb.status === 'available' && Math.random() < 0.45) {
-            t[i] = { ...tb, status: 'occupied', guest: rnd(1, tb.seats), since: fmtTime(new Date()) };
-          } else if (tb.status === 'occupied' && Math.random() < 0.4) {
-            t[i] = { ...tb, status: 'cleaning', guest: null, since: null, cleaningAt: Date.now() };
-          } else {
-            return s;
+    const schedule = () => {
+      if (!alive) return;
+      timer = setTimeout(tick, POLL_MS);
+    };
+
+    async function getJSON<T>(url: string): Promise<T> {
+      const r = await fetch(url, { signal: ac.signal, cache: 'no-store' });
+      if (!r.ok) throw new Error(`${url} → ${r.status}`);
+      return r.json() as Promise<T>;
+    }
+
+    async function tick() {
+      if (!alive) return;
+
+      // 다른 탭을 보고 있으면 서버를 부르지 않는다. Hobby 플랜 호출 수를 아낀다
+      if (typeof document !== 'undefined' && document.hidden) return schedule();
+
+      try {
+        const list = await getJSON<ApiStoreListItem[]>('/api/stores');
+        if (!alive) return;
+
+        setStores((prev) => {
+          const before = new Map(prev.map((s) => [s.id, s]));
+          return list
+            .filter((x) => x.partner)          // 미입점 매장은 이 배열에 넣지 않는다
+            .map((x) => adaptStore(x, before.get(x.id)));
+        });
+
+        // 지금 보고 있는 매장 한 곳만 배열까지 받아온다
+        if (focusId) {
+          const detail = await getJSON<ApiStoreDetail>(`/api/stores/${focusId}`);
+          if (!alive) return;
+          if (detail?.partner) {
+            setStores((prev) =>
+              prev.map((s) => (s.id === detail.id ? adaptStoreDetail(detail, s) : s)),
+            );
           }
-          return { ...s, tables: t, tablesUpdated: Date.now() };
-        })
-      );
-    }, 5000);
+        }
 
-    const c = setInterval(() => {               // 공영주차장 9초
+        setLive(true);
+        setLastSync(Date.now());
+        warnedRef.current = false;
+      } catch (e) {
+        if (!alive || ac.signal.aborted) return;
+        // 실패해도 화면의 마지막 값을 지우지 않는다. 빈 화면보다 오래된 값이 낫다
+        console.error('[poll]', e);
+        if (!warnedRef.current) {
+          warnedRef.current = true;
+          pushToast({ title: '실시간 정보를 불러오지 못했어요', desc: '연결을 확인하는 중입니다', tone: 'warn' });
+        }
+      }
+
+      schedule();
+    }
+
+    refreshRef.current = () => {
+      if (timer) clearTimeout(timer);
+      void tick();
+    };
+
+    void tick();
+
+    // 탭으로 돌아오면 3초를 기다리지 않고 바로 한 번 읽는다
+    const onVisible = () => { if (!document.hidden) refreshRef.current(); };
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      alive = false;
+      ac.abort();
+      if (timer) clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      refreshRef.current = () => {};
+    };
+  }, [mounted, simOn, focusId, pushToast]);
+
+  /* ── 공영주차장 ──────────────────────────────────────────────
+     대전시 공공 API 연동 전이라 담당 엔드포인트가 없다. 시뮬레이터를 남겨 둔다.
+     TODO 실제 API 가 생기면 위 폴링 안으로 옮긴다 */
+  useEffect(() => {
+    if (!mounted || !simOn) return;
+    const t = setInterval(() => {
       setLots((prev) =>
         prev.map((l) => ({
           ...l,
@@ -198,11 +345,12 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
         }))
       );
     }, 9000);
-
-    return () => { clearInterval(a); clearInterval(b); clearInterval(c); };
+    return () => clearInterval(t);
   }, [mounted, simOn]);
 
-  /* 정리 중 → 빈 자리 자동 전환. 관리자가 '정리 완료'를 누르지 않아도 풀린다 */
+  /* 정리 중 → 빈 자리 자동 전환.
+     서버(GET /api/stores)도 같은 40초 규칙으로 계산해서 내려준다. 여기 타이머는
+     폴링과 폴링 사이의 최대 3초를 메우는 용도다. 기준이 같으므로 어긋나지 않는다. */
   useEffect(() => {
     if (!mounted) return;
     const t = setInterval(() => {
@@ -225,8 +373,35 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(t);
   }, [mounted]);
 
+  /** 쓰기 공통 — 보내고, 끝나면 즉시 다시 읽어 서버 값으로 맞춘다 */
+  const send = useCallback(
+    async (url: string, body: Record<string, unknown>, failMsg: string) => {
+      try {
+        const r = await fetch(url, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) {
+          // 서버가 준 안내문이 우리 문구보다 정확하다.
+          // 409(다른 직원이 먼저 누름)면 "화면을 새로고침해 주세요" 가 그대로 뜬다
+          const j = await r.json().catch(() => null);
+          pushToast({ title: failMsg, desc: j?.message ?? `오류 ${r.status}`, tone: 'warn' });
+        }
+      } catch (e) {
+        console.error('[PATCH]', e);
+        pushToast({ title: failMsg, desc: '연결을 확인해 주세요', tone: 'warn' });
+      } finally {
+        refreshRef.current();   // 성공이든 실패든 서버가 진실이다
+      }
+    },
+    [pushToast],
+  );
+
   const api: SpotApi = {
     mounted, stores, lots, reservations, adminRes, reviews, favorites, recent, simOn, toasts, log, profile,
+    live, lastSync,
+    refresh: () => refreshRef.current(),
     setSimOn, setRecent, pushToast, addLog, setAdminRes, updateProfile,
 
     getStore: (id) => stores.find((s) => s.id === id),
@@ -253,6 +428,9 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
     },
 
     setSlot: (storeId, code, patch, logInput) => {
+      const found = stores.find((s) => s.id === storeId)?.parking.slots.find((x) => x.code === code);
+
+      // 1) 화면 먼저 바꾼다 — 관리자가 누른 즉시 반응해야 한다
       setStores((prev) =>
         prev.map((s) =>
           s.id !== storeId ? s : {
@@ -266,14 +444,17 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
         )
       );
       if (logInput) addLog(logInput.who, logInput.msg, logInput.tone);
+
+      // 2) 서버에 보낸다
+      const body = toSlotBody(patch);
+      if (!body) return;                                   // 수동 지정과 무관한 변경
+      const slotId = found?.id ?? `${storeId}_${code}`;     // 목업에는 id 가 없다
+      void send(`/api/admin/slots/${slotId}`, body, '주차면 상태를 저장하지 못했어요');
     },
-    setSlots: (storeId, slots, logInput) => {
-      setStores((prev) =>
-        prev.map((s) => (s.id !== storeId ? s : { ...s, parking: { ...s.parking, slots, updated: Date.now() } }))
-      );
-      if (logInput) addLog(logInput.who, logInput.msg, logInput.tone);
-    },
+
     setTable: (storeId, tableId, patch, logInput) => {
+      const before = stores.find((s) => s.id === storeId)?.tables.find((t) => t.id === tableId);
+
       setStores((prev) =>
         prev.map((s) =>
           s.id !== storeId ? s : {
@@ -282,6 +463,18 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
             tables: s.tables.map((t) => (t.id !== tableId ? t : { ...t, ...patch })),
           }
         )
+      );
+      if (logInput) addLog(logInput.who, logInput.msg, logInput.tone);
+
+      const action = toTableAction(before?.status, patch);
+      if (!action) return;                                 // 상태가 안 바뀌는 변경
+      void send(`/api/admin/tables/${tableId}`, { action }, '테이블 상태를 저장하지 못했어요');
+    },
+
+    // 배치도 통째 저장은 아직 API 가 없다 (B 담당 feat/b-layout-save). 지금은 메모리에만 반영한다
+    setSlots: (storeId, slots, logInput) => {
+      setStores((prev) =>
+        prev.map((s) => (s.id !== storeId ? s : { ...s, parking: { ...s.parking, slots, updated: Date.now() } }))
       );
       if (logInput) addLog(logInput.who, logInput.msg, logInput.tone);
     },
