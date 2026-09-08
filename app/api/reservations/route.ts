@@ -128,3 +128,71 @@ export async function POST(req: Request) {
     )
   }
 }
+
+/** 스키마에 cancelled 가 없어 canceled 로 맞춘다 (README 표기와 다름) */
+const UPCOMING = ['upcoming', 'seated'] as const
+
+export async function GET(req: Request) {
+  try {
+    const phone = new URL(req.url).searchParams.get('phone')
+
+    // phone 이 없으면 전체를 주지 않는다 — 남의 예약이 다 보인다
+    if (!phone) {
+      return NextResponse.json(
+        { error: 'PHONE_REQUIRED', message: '연락처가 필요합니다.' },
+        { status: 400 },
+      )
+    }
+
+    const rows = await prisma.reservation.findMany({
+      where: { phone },
+      orderBy: [{ date: 'desc' }, { time: 'desc' }],
+      include: { store: true },
+    })
+
+    const upcoming = rows
+      .filter((r) => UPCOMING.includes(r.status as 'upcoming' | 'seated'))
+      .map((r) => ({
+        id: r.id,
+        code: makeCode(r.date, r.phone, r.time),
+        status: r.status,
+        storeId: r.storeId,
+        storeName: r.store.name,
+        storeImage: r.store.hero ?? '',
+        storeAddress: r.store.addr ?? '',
+        date: r.date,
+        time: r.time,
+        people: r.party,
+        seatType: r.seatType,
+        name: r.name,
+        phone: r.phone,
+        request: r.memo,
+      }))
+
+    const past = rows
+      .filter((r) => !UPCOMING.includes(r.status as 'upcoming' | 'seated'))
+      .map((r) => ({
+        id: r.id,                       // past 에는 code 를 안 보낸다 (QR 없음)
+        status: r.status,
+        storeId: r.storeId,
+        storeName: r.store.name,
+        date: r.date,
+        time: r.time,
+        people: r.party,
+        visitedAt: r.createdAt.getTime(),
+        receiptUploaded: r.receipt,
+        reviewWritten: r.reviewed,
+      }))
+
+    return NextResponse.json(
+      { upcoming, past },
+      { headers: { 'Cache-Control': 'no-store' } },
+    )
+  } catch (e) {
+    console.error('[GET /api/reservations]', e)
+    return NextResponse.json(
+      { error: 'RESERVATIONS_FETCH_FAILED', message: '예약 목록을 불러오지 못했습니다.' },
+      { status: 500 },
+    )
+  }
+}
