@@ -7,6 +7,7 @@ import { Icon } from '@/components/ui/Icon';
 import { cx, fmtTime } from '@/lib/format';
 import { ADMIN_NAV, ADMIN_STORE_ID } from '@/lib/tokens';
 import { useApp, useNow } from '@/lib/store';
+import LogoutButton from './LogoutButton'; 
 
 /**
  * 관리자 사이드바
@@ -71,8 +72,11 @@ export const AdminSidebar = () => {
           </button>
         </div>
       </div>
+      <LogoutButton />
     </aside>
   );
+
+
 };
 
 /** 관리자 화면 상단 바 */
