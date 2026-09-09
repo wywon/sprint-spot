@@ -2,6 +2,7 @@ import React from 'react';
 import { AdminSidebar } from '@/components/admin/Sidebar';
 import { Toaster } from '@/components/ui/overlays';
 import { ModeSwitch } from '@/components/ModeSwitch';
+import NoShowSweeper from '@/components/admin/NoShowSweeper'
 
 /**
  * 관리자 패널 레이아웃 — Desktop First (1440 / 1280 기준)
@@ -22,6 +23,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <div className="grow flex overflow-hidden relative">
         <AdminSidebar />
         <main className="grow flex flex-col overflow-hidden">{children}</main>
+        <NoShowSweeper />   
         <Toaster />
       </div>
     </div>
