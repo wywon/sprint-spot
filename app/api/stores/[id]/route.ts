@@ -99,6 +99,7 @@ export async function GET(
       lat: s.lat,
       lng: s.lng,
       phone: s.tel ?? '',
+      price: s.price ?? '',   // [b4] 이슈때 추가
       image: s.hero ?? '',
       images: s.hero ? [s.hero] : [],
       tags: s.tags,

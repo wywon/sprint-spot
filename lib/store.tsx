@@ -74,6 +74,35 @@ function toTableAction(from: TableStatus | undefined, patch: Partial<StoreTable>
 }
 
 /**
+ * [b4] 매장 정보 — PATCH /api/admin/stores/[id]
+ * 여긴 action 이 없다. 상태 전이가 아니라 값 교체라서 바뀐 필드만 그대로 보낸다.
+ * 화면은 types.ts 이름(cat·addr·tel·open)으로 주고, 여기서 API 이름으로 옮긴다.
+ */
+export interface StoreInfoPatch {
+  name: string;
+  cat: string;
+  addr: string;
+  tel: string;
+  /** '10:30 - 20:00' — types.ts 모양 그대로. 아래에서 잘라 보낸다 */
+  open: string;
+  price: string;
+  parkingFee: string;
+}
+
+function toStoreBody(p: StoreInfoPatch): Record<string, unknown> {
+  const [open = '', close = ''] = p.open.split('-').map((v) => v.trim());
+  return {
+    name: p.name,
+    category: p.cat,
+    address: p.addr,
+    phone: p.tel,
+    price: p.price,
+    hours: { open, close },
+    parking: { fee: p.parkingFee },
+  };
+}
+
+/**
  * 주차면 — PATCH /api/admin/slots/[id] 는 만료 '시각'이 아니라 '분'을 받는다.
  * manualStatus 키가 없으면 400 이므로 항상 포함시킨다.
  * null 을 보내면 수동 지정 해제(자동 감지 복귀)다.
@@ -124,6 +153,7 @@ interface SpotApi {
   toasts: Toast[];
   log: LogEntry[];
   profile: Profile;
+  
 
   /** [C15] 서버에서 한 번이라도 받아왔는가. false 면 아직 목업을 보고 있다 */
   live: boolean;
@@ -152,6 +182,8 @@ interface SpotApi {
   setTable: (storeId: string, tableId: string, patch: Partial<StoreTable>, log?: LogInput) => void;
   setTables: (storeId: string, tables: StoreTable[], log?: LogInput) => void;
   setSensor: (storeId: string, sensor: SensorState) => void;
+  /** [b4] 매장 기본 정보 수정 (관리자 · 매장 관리 > 매장 정보) */
+  updateStoreInfo: (storeId: string, patch: StoreInfoPatch) => void;
   setAdminRes: React.Dispatch<React.SetStateAction<AdminReservation[]>>;
 
   updateProfile: (next: Profile) => void;
@@ -486,6 +518,25 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
       setStores((prev) =>
         prev.map((s) => (s.id !== storeId ? s : { ...s, sensor, parking: { ...s.parking, updated: Date.now() } }))
       ),
+
+      // [b4] 매장 정보 — 다른 쓰기와 같다. 화면을 먼저 바꾸고 보낸 뒤 다시 읽는다.
+      updateStoreInfo: (storeId, patch) => {
+        setStores((prev) =>
+          prev.map((s) =>
+            s.id !== storeId ? s : {
+              ...s,
+              name: patch.name,
+              cat: patch.cat,
+              addr: patch.addr,
+              tel: patch.tel,
+              open: patch.open,
+              price: patch.price,
+              parking: { ...s.parking, fee: patch.parkingFee },
+            }
+          )
+        );
+        void send(`/api/admin/stores/${storeId}`, toStoreBody(patch), '매장 정보를 저장하지 못했어요');
+      },
   };
 
   return <SpotCtx.Provider value={api}>{children}</SpotCtx.Provider>;

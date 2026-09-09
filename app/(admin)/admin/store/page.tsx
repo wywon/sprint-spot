@@ -66,26 +66,213 @@ export default function AdminStorePage() {
 
 /* ── 매장 정보 ─────────────────────────────────────────── */
 
+/**
+ * [b4] 매장 정보 — 보기 / 수정 두 모드
+ *
+ * ★ 왜 draft 를 따로 두는가
+ *   lib/store.tsx 가 3초마다 서버를 다시 읽어 store 를 통째로 갈아 끼운다.
+ *   input 을 store 값에 바로 묶으면 타이핑 도중 3초마다 값이 되돌아간다.
+ *   그래서 '수정' 을 누른 순간 값을 한 번 복사해 두고, 저장·취소 전까지는
+ *   폴링 결과를 쳐다보지 않는다. 테이블·주차장 구성 탭과 같은 방식이다.
+ */
 function SetInfo({ store }: { store: PartnerStore }) {
+  const { updateStoreInfo, pushToast, addLog } = useApp();
+  const [edit, setEdit] = useState(false);
+  const [draft, setDraft] = useState<InfoDraft | null>(null);
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+
   const rows: [string, string][] = [
     ['매장명', store.name], ['업종', store.cat], ['주소', store.addr],
     ['전화번호', store.tel], ['영업시간', store.open], ['가격대', store.price],
     ['주차 요금', store.parking.fee],
   ];
 
+  const start = () => {
+    const [openAt = '', closeAt = ''] = (store.open || '').split('-').map((v) => v.trim());
+    setDraft({
+      name: store.name, cat: store.cat, addr: store.addr, tel: store.tel,
+      openAt, closeAt, price: store.price, parkingFee: store.parking.fee,
+    });
+    setTouched({});
+    setEdit(true);
+  };
+
+  const cancel = () => {
+    if (draft && dirtyOf(store, draft) && !confirm('저장하지 않고 나갈까요?')) return;
+    setEdit(false);
+    setDraft(null);
+  };
+
+  const set = (k: keyof InfoDraft, v: string) =>
+    setDraft((d) => (d ? { ...d, [k]: v } : d));
+
+  const errors = draft ? validateInfo(draft) : {};
+  const canSave = Object.keys(errors).length === 0;
+
+  const save = () => {
+    if (!draft || !canSave) return;
+    const open = draft.openAt && draft.closeAt ? `${draft.openAt} - ${draft.closeAt}` : '';
+
+    updateStoreInfo(store.id, {
+      name: draft.name.trim(),
+      cat: draft.cat.trim(),
+      addr: draft.addr.trim(),
+      tel: draft.tel.trim(),
+      open,
+      price: draft.price.trim(),
+      parkingFee: draft.parkingFee.trim(),
+    });
+
+    addLog('최영호', `매장 정보 수정 · ${draft.name.trim()}`, 'brand');
+    pushToast({
+      title: '매장 정보를 저장했어요',
+      desc: '손님 앱 매장 상세에 바로 반영됩니다',
+      tone: 'ok',
+      icon: 'check',
+    });
+    setEdit(false);
+    setDraft(null);
+  };
+
   return (
     <div className="grid grid-cols-3 gap-5">
       <Card className="col-span-2 p-6">
         <div className="flex items-center justify-between mb-4">
           <div className="text-[15px] font-extrabold text-ink-900">기본 정보</div>
-          <Button variant="outline" size="sm" icon="pencil">수정</Button>
+          {edit ? (
+            <div className="flex gap-2">
+              <Button variant="ghost" size="sm" onClick={cancel}>취소</Button>
+              <Button variant="primary" size="sm" icon="check" disabled={!canSave} onClick={save}>저장</Button>
+            </div>
+          ) : (
+            <Button variant="outline" size="sm" icon="pencil" onClick={start}>수정</Button>
+          )}
         </div>
-        {rows.map(([l, v]) => (
-          <div key={l} className="flex gap-4 py-3 border-b border-ink-100 last:border-0">
-            <span className="w-[104px] shrink-0 text-[12.5px] font-extrabold text-ink-500">{l}</span>
-            <span className="text-[13.5px] font-bold text-ink-800">{v}</span>
-          </div>
-        ))}
+
+        {edit && draft ? (
+          <>
+            <div className="mb-5 rounded-xl bg-brand-50 border border-brand-200 px-4 py-3 flex items-start gap-2.5">
+              <Icon n="question" s={16} cls="text-brand-600 shrink-0 mt-px" />
+              <div className="text-[12px] font-medium text-brand-700 leading-relaxed">
+                저장하면 <b>손님 앱 매장 상세</b>에 바로 반영됩니다. 수정하는 동안에는
+                실시간 갱신이 이 화면의 입력값을 덮어쓰지 않습니다.
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <InfoField label="매장명" error={touched.name ? errors.name : undefined}>
+                <input
+                  value={draft.name}
+                  onChange={(e) => set('name', e.target.value)}
+                  onBlur={() => setTouched((p) => ({ ...p, name: true }))}
+                  maxLength={40}
+                  placeholder="대흥동 손칼국수"
+                  className={infoInput(touched.name && errors.name)}
+                />
+              </InfoField>
+
+              <div className="grid grid-cols-2 gap-4">
+                <InfoField label="업종" error={touched.cat ? errors.cat : undefined}>
+                  <input
+                    value={draft.cat}
+                    onChange={(e) => set('cat', e.target.value)}
+                    onBlur={() => setTouched((p) => ({ ...p, cat: true }))}
+                    maxLength={20}
+                    placeholder="칼국수 · 분식"
+                    className={infoInput(touched.cat && errors.cat)}
+                  />
+                </InfoField>
+
+                <InfoField
+                  label="전화번호"
+                  optional
+                  error={touched.tel ? errors.tel : undefined}
+                >
+                  <input
+                    value={draft.tel}
+                    onChange={(e) => set('tel', e.target.value)}
+                    onBlur={() => setTouched((p) => ({ ...p, tel: true }))}
+                    inputMode="tel"
+                    placeholder="042-256-1234"
+                    className={cx(infoInput(touched.tel && errors.tel), 'tnum')}
+                  />
+                </InfoField>
+              </div>
+
+              <InfoField label="주소" error={touched.addr ? errors.addr : undefined}>
+                <input
+                  value={draft.addr}
+                  onChange={(e) => set('addr', e.target.value)}
+                  onBlur={() => setTouched((p) => ({ ...p, addr: true }))}
+                  maxLength={100}
+                  placeholder="대전 중구 대흥동 123-4"
+                  className={infoInput(touched.addr && errors.addr)}
+                />
+              </InfoField>
+
+              <InfoField
+                label="영업시간"
+                help="손님 앱의 '영업 중 / 영업 종료' 표시와 예약 가능 시간이 이 값으로 계산됩니다"
+                error={touched.hours ? errors.hours : undefined}
+              >
+                <div className="flex items-center gap-2.5">
+                  <input
+                    type="time"
+                    value={draft.openAt}
+                    onChange={(e) => set('openAt', e.target.value)}
+                    onBlur={() => setTouched((p) => ({ ...p, hours: true }))}
+                    className={cx(infoInput(touched.hours && errors.hours), 'tnum w-[150px]')}
+                  />
+                  <span className="text-[13px] font-extrabold text-ink-400">–</span>
+                  <input
+                    type="time"
+                    value={draft.closeAt}
+                    onChange={(e) => set('closeAt', e.target.value)}
+                    onBlur={() => setTouched((p) => ({ ...p, hours: true }))}
+                    className={cx(infoInput(touched.hours && errors.hours), 'tnum w-[150px]')}
+                  />
+                </div>
+              </InfoField>
+
+              <div className="grid grid-cols-2 gap-4">
+                <InfoField label="가격대" optional error={touched.price ? errors.price : undefined}>
+                  <input
+                    value={draft.price}
+                    onChange={(e) => set('price', e.target.value)}
+                    onBlur={() => setTouched((p) => ({ ...p, price: true }))}
+                    maxLength={40}
+                    placeholder="8,000~14,000원"
+                    className={infoInput(touched.price && errors.price)}
+                  />
+                </InfoField>
+
+                <InfoField
+                  label="주차 요금"
+                  optional
+                  error={touched.parkingFee ? errors.parkingFee : undefined}
+                >
+                  <input
+                    value={draft.parkingFee}
+                    onChange={(e) => set('parkingFee', e.target.value)}
+                    onBlur={() => setTouched((p) => ({ ...p, parkingFee: true }))}
+                    maxLength={60}
+                    placeholder="식사 시 1시간 무료 · 이후 10분 300원"
+                    className={infoInput(touched.parkingFee && errors.parkingFee)}
+                  />
+                </InfoField>
+              </div>
+            </div>
+          </>
+        ) : (
+          rows.map(([l, v]) => (
+            <div key={l} className="flex gap-4 py-3 border-b border-ink-100 last:border-0">
+              <span className="w-[104px] shrink-0 text-[12.5px] font-extrabold text-ink-500">{l}</span>
+              <span className="text-[13.5px] font-bold text-ink-800">
+                {v || <span className="text-ink-400">등록되지 않음</span>}
+              </span>
+            </div>
+          ))
+        )}
       </Card>
 
       <div className="space-y-5">
@@ -126,6 +313,97 @@ function SetInfo({ store }: { store: PartnerStore }) {
           </div>
         </Card>
       </div>
+    </div>
+  );
+}
+
+/* ── 매장 정보 폼 보조 ──────────────────────────────────────
+   ★ export 를 붙이지 않는다. page.tsx 는 default 외의 export 를 허용하지 않는다.
+     5주차에 components/ui/primitives.tsx 로 옮기면 my/edit 의 Field 와 합칠 수 있다. */
+
+interface InfoDraft {
+  name: string;
+  cat: string;
+  addr: string;
+  tel: string;
+  openAt: string;   // 'HH:MM'
+  closeAt: string;  // 'HH:MM'
+  price: string;
+  parkingFee: string;
+}
+
+/** 전화번호 — 숫자와 하이픈만. 서버(app/api/admin/stores/[id])와 같은 규칙 */
+const TEL_RE = /^\d[\d-]{7,14}$/;
+
+/**
+ * 서버 검증과 같은 규칙을 화면에서도 한 번 본다.
+ * 서버 검증을 없애자는 뜻이 아니다. 왕복 한 번을 아껴 오타를 즉시 알려 주려는 것이고,
+ * 최종 판단은 언제나 서버가 한다.
+ */
+function validateInfo(d: InfoDraft): Record<string, string> {
+  const e: Record<string, string> = {};
+
+  if (!d.name.trim()) e.name = '매장명을 입력해 주세요';
+  if (!d.cat.trim()) e.cat = '업종을 입력해 주세요';
+  if (!d.addr.trim()) e.addr = '주소를 입력해 주세요';
+
+  const tel = d.tel.trim();
+  if (tel && !TEL_RE.test(tel)) e.tel = '숫자와 - 만 넣어 주세요. 예) 042-256-1234';
+
+  const { openAt: o, closeAt: c } = d;
+  if (o || c) {
+    if (!o || !c) e.hours = '시작 시각과 종료 시각을 모두 입력해 주세요';
+    // ★ 자정을 넘기는 영업시간은 아직 저장할 수 없다.
+    //   손님 화면의 '영업 중' 판단이 open ≤ 지금 < close 한 줄이라 하루 종일 종료로 뜬다.
+    else if (c <= o) e.hours = '종료 시각이 시작 시각보다 빠릅니다. 자정을 넘기는 영업시간은 아직 등록할 수 없어요';
+  }
+
+  if (d.price.trim().length > 40) e.price = '40자 이내로 입력해 주세요';
+  if (d.parkingFee.trim().length > 60) e.parkingFee = '60자 이내로 입력해 주세요';
+
+  return e;
+}
+
+/** 저장하지 않고 나갈 때 확인 창을 띄울지 판단한다 */
+function dirtyOf(store: PartnerStore, d: InfoDraft) {
+  const [o = '', c = ''] = (store.open || '').split('-').map((v) => v.trim());
+  return (
+    d.name !== store.name || d.cat !== store.cat || d.addr !== store.addr ||
+    d.tel !== store.tel || d.openAt !== o || d.closeAt !== c ||
+    d.price !== store.price || d.parkingFee !== store.parking.fee
+  );
+}
+
+const infoInput = (bad?: string | false) =>
+  cx(
+    'w-full h-11 rounded-xl border px-3.5 text-[13.5px] font-bold text-ink-900 outline-none transition-colors',
+    bad ? 'border-busy-500 focus:border-busy-500' : 'border-ink-200 focus:border-brand-500'
+  );
+
+function InfoField({
+  label, help, error, optional, children,
+}: {
+  label: string;
+  help?: string;
+  error?: string;
+  optional?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <span className="text-[12px] font-extrabold text-ink-700">{label}</span>
+        {optional && <span className="text-[11px] font-bold text-ink-400">선택</span>}
+      </div>
+      {children}
+      {error ? (
+        <div className="flex items-start gap-1 mt-1.5">
+          <Icon n="alert" s={13} cls="text-busy-500 shrink-0 mt-px" />
+          <span className="text-[11.5px] font-bold text-busy-500">{error}</span>
+        </div>
+      ) : help ? (
+        <div className="text-[11.5px] font-medium text-ink-500 mt-1.5 leading-relaxed">{help}</div>
+      ) : null}
     </div>
   );
 }

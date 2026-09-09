@@ -83,6 +83,7 @@ export async function GET() {
         lat: s.lat,
         lng: s.lng,
         image: s.hero ?? '',
+         price: s.price ?? '',   // [b4] 이슈 때 추가
         tags: s.tags,
         rating: s.rating,
         reviews: s.reviews,
