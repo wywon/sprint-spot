@@ -3,6 +3,9 @@
  * ─────────────────────────────────────────────────────────────
  * 4주차에 Prisma를 붙일 때, 여기 있는 타입이 그대로 Prisma 모델의 모양이 된다.
  * 즉 이 파일이 프론트와 백엔드가 합의하는 계약서다. 필드를 바꾸려면 C와 상의할 것.
+ *
+ * [C15] 추가 — 기존 필드는 하나도 지우거나 바꾸지 않았다. 선택 필드 3개만 늘렸다.
+ *   ParkingSlot.id  · StoreTable.code · PartnerStore.agg
  */
 
 /** 주차면 상태 — 센서가 판단한 결과 */
@@ -26,6 +29,8 @@ export type TableStatus =
 export type SensorState = 'online' | 'offline';
 
 export interface ParkingSlot {
+  /** DB 기본키 's1_A1'. PATCH /api/admin/slots/[id] 에 쓴다. 목업에는 없다 */
+  id?: string;
   code: string;          // 'A1' — 관리자만 본다. 손님 화면에는 노출하지 않는다
   row: number;
   col: number;
@@ -44,6 +49,8 @@ export interface ParkingSlot {
 
 export interface StoreTable {
   id: string;            // 't1' — ★ 손님 화면에 절대 노출하지 않는다
+  /** 'T04' — 관리자 배치도 라벨. 손님 화면에는 절대 쓰지 않는다 */
+  code?: string;
   seats: number;
   status: TableStatus;
   row: number;
@@ -55,6 +62,26 @@ export interface StoreTable {
   resAt: string | null;
   resName: string | null;
   resParty: number | null;
+}
+
+/**
+ * 서버가 계산해서 내려준 집계.
+ * ─────────────────────────────────────────────────────────────
+ * GET /api/stores 목록 응답에는 tables[] · slots[] 배열이 없다.
+ * 배열 없이도 탐색·검색 화면이 숫자를 그릴 수 있게, 서버 집계를 여기 담는다.
+ * seatStats() / parkStats() 가 이 값이 있으면 우선 쓴다.
+ * 노트북 두 대의 숫자가 어긋나지 않는 것이 목적이다.
+ */
+export interface StoreAgg {
+  seats: {
+    total: number; available: number; occupied: number; reserved: number; cleaning: number;
+  } | null;
+  parking: {
+    total: number;
+    /** 센서 offline 이면 null. 0(만차)과 '모른다'는 완전히 다른 이야기다 */
+    available: number | null;
+    unknown: number | null;
+  } | null;
 }
 
 /** 입점 식당 — 주차장을 보유하고 주차면마다 센서가 달려 있다 */
@@ -81,6 +108,8 @@ export interface PartnerStore {
     slots: ParkingSlot[];
     updated: number;
   };
+  /** 서버 집계. 목업일 때는 없다(undefined) */
+  agg?: StoreAgg;
 }
 
 /** 미입점 식당 — 지도에 상호명만 뜨고 예약 버튼이 비활성이다 */
@@ -169,4 +198,14 @@ export interface LogEntry {
   who: string;
   msg: string;
   tone: 'ok' | 'warn' | 'busy' | 'brand' | 'off';
+}
+
+//프로필 수정에 사용하는 profile 객체 생성 store.tsx에 선언한 ME 객체에 맞춤
+export type CarType = '경차' | '중형' | '대형' | '전기차';
+
+export interface Profile {
+  name: string;
+  phone: string;
+  car: string;
+  carType: CarType;
 }

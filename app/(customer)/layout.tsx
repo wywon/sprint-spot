@@ -2,7 +2,7 @@ import React from 'react';
 import { PhoneChrome, TabBar } from '@/components/customer/Shell';
 import { Toaster } from '@/components/ui/overlays';
 import { ModeSwitch } from '@/components/ModeSwitch';
-
+import { SettingsBoot } from './SettingsBoot';
 /**
  * 손님 앱 레이아웃 — Mobile First (390 × 844 기준)
  * ─────────────────────────────────────────────────────────────
@@ -21,7 +21,8 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
       <ModeSwitch />
       <div className="grow grid place-items-center py-8 overflow-y-auto thin-sb">
         <PhoneChrome>
-          <div className="absolute inset-0 bg-white">
+          <SettingsBoot/>
+          <div className="absolute inset-0 bg-white spot-zoom">
             {children}
             <TabBar />
             <Toaster />

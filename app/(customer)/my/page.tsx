@@ -4,8 +4,10 @@ import React, { useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { Button, Card, Segmented } from '@/components/ui/primitives';
 import { cx } from '@/lib/format';
-import { ME } from '@/lib/mock';
+// import { ME } from '@/lib/mock';
 import { useApp } from '@/lib/store';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 /**
  * 마이페이지
@@ -20,9 +22,8 @@ import { useApp } from '@/lib/store';
  *   주차 자리 수는 계속 바뀌므로 알림으로 보내면 소음이 된다.
  */
 export default function MyPage() {
-  const { reservations, simOn, setSimOn } = useApp();
-  const [car, setCar] = useState({ no: ME.car, type: ME.carType });
-  const [editCar, setEditCar] = useState(false);
+  const { reservations, simOn, setSimOn, profile } = useApp();
+  const router = useRouter();
 
   const upcoming = reservations.filter((r) => r.status === 'upcoming').length;
   const visits = reservations.filter((r) => r.status === 'done').length;
@@ -34,13 +35,14 @@ export default function MyPage() {
         <div className="text-[20px] font-extrabold text-ink-900 mb-4">마이페이지</div>
         <div className="flex items-center gap-3.5">
           <div className="w-16 h-16 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 grid place-items-center text-white text-[22px] font-extrabold shrink-0">
-            {ME.name.slice(0, 1)}
+            {profile.name.slice(0, 1)}
           </div>
           <div className="grow min-w-0">
-            <div className="text-[17px] font-extrabold text-ink-900">{ME.name}</div>
-            <div className="text-[12.5px] font-bold text-ink-500 tnum">{ME.phone}</div>
+            <div className="text-[17px] font-extrabold text-ink-900">{profile.name}</div>
+            <div className="text-[12.5px] font-bold text-ink-500 tnum">{profile.phone}</div>
           </div>
-          <Button variant="outline" size="sm" icon="pencil">프로필 수정</Button>
+          <Button variant="outline" size="sm" icon="pencil"
+            onClick={()=> router.push('/my/edit')}>프로필 수정</Button>
         </div>
 
         <div className="grid grid-cols-3 gap-2 mt-4">
@@ -58,38 +60,16 @@ export default function MyPage() {
         <Card className="p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="text-[13px] font-extrabold text-ink-900">차량 정보</div>
-            <button onClick={() => setEditCar(!editCar)} className="text-[11.5px] font-extrabold text-brand-700">
-              {editCar ? '완료' : '수정'}
-            </button>
           </div>
-          {editCar ? (
-            <div className="space-y-2">
-              <input
-                value={car.no}
-                onChange={(e) => setCar({ ...car, no: e.target.value })}
-                className="w-full h-11 rounded-xl border border-ink-200 px-3.5 text-[14px] font-bold outline-none focus:border-brand-500"
-              />
-              <Segmented
-                full
-                value={car.type}
-                onChange={(v) => setCar({ ...car, type: v })}
-                options={[
-                  { value: '경차', label: '경차' }, { value: '중형', label: '중형' },
-                  { value: '대형', label: '대형' }, { value: '전기차', label: '전기차' },
-                ]}
-              />
-            </div>
-          ) : (
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-xl bg-brand-50 grid place-items-center text-brand-600 shrink-0">
                 <Icon n="car" s={21} />
               </div>
               <div className="grow">
-                <div className="text-[14.5px] font-extrabold text-ink-900 tnum">{car.no}</div>
-                <div className="text-[11.5px] font-bold text-ink-500">{car.type}</div>
+                <div className="text-[14.5px] font-extrabold text-ink-900 tnum">{profile.car}</div>
+                <div className="text-[11.5px] font-bold text-ink-500">{profile.carType}</div>
               </div>
             </div>
-          )}
           <div className="mt-3 rounded-xl bg-ink-50 px-3 py-2.5 flex items-start gap-2">
             <Icon n="question" s={14} cls="text-ink-400 shrink-0 mt-0.5" />
             <span className="text-[11px] font-medium text-ink-600 leading-relaxed">
@@ -116,14 +96,31 @@ export default function MyPage() {
 
         {/* 배치만 — 4주차 이후 채운다 */}
         <Card className="p-1">
-          {([['history', '최근 본 매장'], ['settings', '앱 설정'], ['sparkle', '접근성']] as const).map(([i, t]) => (
-            <button key={t} className="w-full flex items-center gap-3 px-3.5 py-3.5 hover:bg-ink-50 rounded-xl transition-colors">
-              <Icon n={i} s={19} cls="text-ink-400 shrink-0" />
-              <div className="grow text-left text-[13.5px] font-bold text-ink-800">{t}</div>
-              <Icon n="chevR" s={16} cls="text-ink-300 shrink-0" />
-            </button>
-          ))}
-        </Card>
+  {([
+    ['history',  '최근 본 매장', '/my/recent'],
+    ['settings', '앱 설정',      '/my/settings'],
+  ] as const).map(([i, t, href]) => {
+    const cls =
+      'w-full flex items-center gap-3 px-3.5 py-3.5 hover:bg-ink-50 rounded-xl transition-colors';
+    const inner = (
+      <>
+        <Icon n={i} s={19} cls="text-ink-400 shrink-0" />
+        <div className="grow text-left text-[13.5px] font-bold text-ink-800">{t}</div>
+        <Icon n="chevR" s={16} cls="text-ink-300 shrink-0" />
+      </>
+    );
+
+    return href ? (
+      <Link key={t} href={href} className={cls}>
+        {inner}
+      </Link>
+    ) : (
+      <button key={t} type="button" className={cls}>
+        {inner}
+      </button>
+    );
+  })}
+</Card>
 
         {/* 시뮬레이션 토글 */}
         <Card className="p-4">
