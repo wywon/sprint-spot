@@ -98,8 +98,7 @@ export default function MyPage() {
         <Card className="p-1">
   {([
     ['history',  '최근 본 매장', '/my/recent'],
-    ['settings', '앱 설정',      null],
-    ['sparkle',  '접근성',       null],
+    ['settings', '앱 설정',      '/my/settings'],
   ] as const).map(([i, t, href]) => {
     const cls =
       'w-full flex items-center gap-3 px-3.5 py-3.5 hover:bg-ink-50 rounded-xl transition-colors';
