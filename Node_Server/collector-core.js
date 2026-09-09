@@ -19,6 +19,7 @@ const { ReadlineParser } = require('@serialport/parser-readline');
 const oracledb = require('oracledb');
 
 const { parseParkingLine, summarize, toDisplayString, TOTAL_SPACES } = require('./parser');
+const { nowKstIso } = require('./kst');
 
 const RECONNECT_DELAY_MS = 3000; // 시리얼 끊겼을 때 재시도 간격
 const MOCK_INTERVAL_MS = 1200;   // 실제 아두이노 전송 간격과 맞춤
@@ -134,7 +135,7 @@ async function applyChanges(spaces) {
     }
 
     stats.updates += changes.length;
-    stats.lastChangeAt = new Date().toISOString();
+    stats.lastChangeAt = nowKstIso();
 
     return changes;
   } finally {
@@ -158,7 +159,7 @@ async function onLine(rawLine) {
   }
 
   stats.lines++;
-  stats.lastLineAt = new Date().toISOString();
+  stats.lastLineAt = nowKstIso();
 
   try {
     const changes = await applyChanges(result.spaces);

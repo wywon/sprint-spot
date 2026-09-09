@@ -28,6 +28,7 @@ const cors = require('cors');
 const oracledb = require('oracledb');
 
 const collector = require('./collector-core');
+const { toKstIso, nowKstIso } = require('./kst');
 
 const PORT = Number(process.env.PORT) || 3000;
 const TOTAL_SPACES = 10;
@@ -57,7 +58,8 @@ async function getParkingStatus() {
     const spaces = result.rows.map((row) => ({
       spaceNumber: row.SPACE_NUMBER,
       occupied: row.OCCUPIED === 1,
-      updatedAt: row.UPDATED_AT.toISOString(),
+      // 한국 시간(+09:00) 으로 내보낸다. UTC 의 Z 표기보다 눈으로 읽기 쉽다.
+      updatedAt: toKstIso(row.UPDATED_AT),
     }));
 
     const occupiedSpaces = spaces.filter((s) => s.occupied).length;
@@ -136,7 +138,7 @@ app.get('/api/health', async (req, res) => {
       lastLineAt: s.lastLineAt,           // 마지막으로 데이터를 받은 시각
       lastChangeAt: s.lastChangeAt,       // 마지막으로 상태가 바뀐 시각
     },
-    time: new Date().toISOString(),
+    time: nowKstIso(),
   });
 });
 
