@@ -157,7 +157,7 @@ const lotRows: Prisma.PublicLotCreateManyInput[] = PUBLIC_LOTS.map((l) => ({
   addr: l.addr,
   type: l.type,
   total: l.total,
-  available: l.available,
+  available: l.available ?? 0,
   fee: l.fee,
   dayMax: l.dayMax,
   hours: l.hours,

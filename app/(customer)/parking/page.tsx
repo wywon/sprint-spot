@@ -22,7 +22,7 @@ export default function ParkingTabPage() {
   const [sort, setSort] = useState<'free' | 'near'>('free');
 
   const sortedLots = [...lots].sort((a, b) =>
-    sort === 'free' ? b.available - a.available : a.id.localeCompare(b.id)
+          sort === 'free' ? (b.available ?? -1) - (a.available ?? -1) : a.id.localeCompare(b.id)
   );
 
   const sortedStores = [...stores].sort((a, b) => {
@@ -31,7 +31,7 @@ export default function ParkingTabPage() {
     return sort === 'free' ? bv - av : a.id.localeCompare(b.id);
   });
 
-  const totalFree = lots.reduce((a, l) => a + l.available, 0);
+  const totalFree = lots.reduce((a, l) => a + (l.available ?? 0), 0);
   const fullCount = lots.filter((l) => l.available === 0).length;
 
   return (

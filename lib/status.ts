@@ -134,7 +134,7 @@ export function parkStats(store: PartnerStore): ParkStats {
 export const lotStats = (lot: PublicLot) => ({
   total: lot.total,
   available: lot.available,
-  occupied: lot.total - lot.available,
+  occupied: lot.available == null ? null : lot.total - lot.available,
 });
 
 /** 잔여 비율 → 여유도 등급 */

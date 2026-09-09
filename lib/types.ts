@@ -132,7 +132,7 @@ export interface PublicLot {
   addr: string;
   type: string;
   total: number;
-  available: number;
+  available: number | null;
   fee: string;
   dayMax: string;
   hours: string;
@@ -142,6 +142,8 @@ export interface PublicLot {
   updated: number;
   /** [식당id, 도보 거리(m)] */
   near: [string, number][];
+  realLat?: number;   // 실제 위경도 (카카오맵용)
+  realLng?: number;
 }
 
 export interface Reservation {
