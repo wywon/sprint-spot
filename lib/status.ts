@@ -6,7 +6,13 @@ import type { ParkingSlot, PartnerStore, PublicLot, SlotStatus, StoreTable } fro
  * ─────────────────────────────────────────────────────────────
  * ★ 이 파일이 이 서비스의 핵심 비즈니스 로직이다.
  *   화면 컴포넌트에서 status 를 직접 계산하지 말고 반드시 여기 함수를 부를 것.
- *   4주차에 DB를 붙여도 이 함수들은 그대로 쓴다 (입력만 목업 → Prisma 결과로 바뀐다).
+ *
+ * [C15] 변경 — seatStats / parkStats 에 "서버 집계 우선" 분기를 추가했다.
+ *   GET /api/stores 목록 응답에는 tables[] · slots[] 배열이 없다. 배열을 셀 수
+ *   없으니 서버가 준 store.agg 를 쓴다. 배열이 있어도 agg 가 이긴다 — 노트북 두
+ *   대가 같은 숫자를 봐야 하기 때문이다.
+ *   ★ 단, 주차면 '한 칸'의 최종 상태는 여전히 slotStatus() 가 판단한다. 서버가
+ *     계산하지 않는다는 결정은 그대로다.
  */
 
 /**
@@ -36,6 +42,26 @@ export interface SeatStats {
  */
 export function seatStats(store: PartnerStore): SeatStats {
   const t: StoreTable[] = store.tables;
+
+  // 배치도에 쓸 최대 인원은 배열에서만 알 수 있다 (서버 집계에는 없다)
+  const maxParty = Math.max(
+    0,
+    ...t.filter((x) => x.status === 'available').map((x) => x.seats),
+  );
+
+  const g = store.agg?.seats;
+  if (g) {
+    return {
+      total: g.total,
+      available: g.available,
+      occupied: g.occupied + g.reserved,   // 손님 눈에는 둘이 같다
+      cleaning: g.cleaning,
+      reserved: g.reserved,
+      disabled: Math.max(0, g.total - g.available - g.occupied - g.reserved - g.cleaning),
+      maxParty,
+    };
+  }
+
   const available = t.filter((x) => x.status === 'available').length;
   return {
     total: t.length,
@@ -44,7 +70,7 @@ export function seatStats(store: PartnerStore): SeatStats {
     cleaning: t.filter((x) => x.status === 'cleaning').length,
     reserved: t.filter((x) => x.status === 'reserved').length,
     disabled: t.filter((x) => x.status === 'disabled').length,
-    maxParty: Math.max(0, ...t.filter((x) => x.status === 'available').map((x) => x.seats)),
+    maxParty,
   };
 }
 
@@ -69,16 +95,37 @@ export interface ParkStats {
  */
 export function parkStats(store: PartnerStore): ParkStats {
   const s = store.parking.slots;
+
+  // 수동 지정이 몇 개 살아 있는지는 항상 배열에서 센다 (만료 판단이 클라이언트 몫이므로)
+  const manual = s.filter(
+    (x) => x.manualStatus && x.manualUntil !== null && x.manualUntil > Date.now(),
+  ).length;
+
   if (store.sensor === 'offline') {
-    return { total: s.length, available: null, occupied: null, unknown: null, manual: 0, offline: true };
+    const total = store.agg?.parking?.total ?? s.length;
+    return { total, available: null, occupied: null, unknown: null, manual: 0, offline: true };
   }
+
+  const g = store.agg?.parking;
+  if (g && g.available !== null) {
+    const unknown = g.unknown ?? 0;
+    return {
+      total: g.total,
+      available: g.available,
+      occupied: Math.max(0, g.total - g.available - unknown),
+      unknown,
+      manual,
+      offline: false,
+    };
+  }
+
   const st = s.map(slotStatus);
   return {
     total: s.length,
     available: st.filter((x) => x === 'available').length,
     occupied: st.filter((x) => x === 'occupied').length,
     unknown: st.filter((x) => x === 'unknown').length,
-    manual: s.filter((x) => x.manualStatus && x.manualUntil !== null && x.manualUntil > Date.now()).length,
+    manual,
     offline: false,
   };
 }
