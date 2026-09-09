@@ -11,6 +11,7 @@
 require('dotenv').config({ quiet: true });
 
 const oracledb = require('oracledb');
+const { toKstText } = require('./kst');
 
 async function main() {
   let connection;
@@ -97,7 +98,7 @@ async function main() {
         console.log('\n내용 (최대 12행):');
         sample.rows.forEach((row) => {
           const text = Object.entries(row)
-            .map(([k, v]) => `${k}=${v instanceof Date ? v.toISOString() : v}`)
+            .map(([k, v]) => `${k}=${v instanceof Date ? toKstText(v) : v}`)
             .join('  ');
           console.log('  ' + text);
         });

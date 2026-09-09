@@ -13,6 +13,7 @@
 require('dotenv').config({ quiet: true });
 
 const oracledb = require('oracledb');
+const { toKstText } = require('./kst');
 
 const TOTAL_SPACES = 10;
 const TABLE_NAME = 'PARKING_SPACES';
@@ -118,7 +119,7 @@ async function main() {
     for (const row of rows.rows) {
       const no = String(row.SPACE_NUMBER).padStart(2, ' ');
       const status = row.OCCUPIED === 1 ? '주차중' : '빈자리';
-      console.log(`${no}    ${status}   ${row.UPDATED_AT.toISOString()}`);
+      console.log(`${no}    ${status}   ${toKstText(row.UPDATED_AT)}`);
     }
 
     console.log('------------------------------------------');

@@ -15,6 +15,7 @@
 require('dotenv').config({ quiet: true });
 
 const oracledb = require('oracledb');
+const { toKstText } = require('./kst');
 
 const DB_USER = process.env.DB_USER;
 const DB_PASSWORD = process.env.DB_PASSWORD;
@@ -127,7 +128,7 @@ async function main() {
     for (const row of rows.rows) {
       const no = String(row.SPACE_NUMBER).padStart(2, ' ');
       const status = row.OCCUPIED === 1 ? '주차중' : '빈자리';
-      const at = row.UPDATED_AT.toISOString();
+      const at = toKstText(row.UPDATED_AT);
       console.log(`${no}    ${status}   ${at}`);
     }
 
