@@ -1,58 +1,50 @@
 // app/api/lots/route.ts
 import { NextResponse } from 'next/server'
-import { XMLParser } from 'fast-xml-parser'
 import { readFile } from 'fs/promises'
 import path from 'path'
+import { XMLParser } from 'fast-xml-parser'
 
 export const dynamic = 'force-dynamic'
 
 /**
  * 대전시 공영주차장 목록
  * ─────────────────────────────────────────────────────────────
- * 공공데이터포털 「대전광역시_주차장정보 제공 API 서비스2」를 서버가 대신 부른다.
+ * 공공데이터포털의 두 데이터셋을 합쳐서 쓴다.
  *
- * ★ 왜 서버가 부르는가
- *   1. 브라우저에서 직접 부르면 CORS 에 막힌다
- *   2. 인증키가 화면 소스에 그대로 노출된다
+ *   data/lots.xml     「대전광역시_주차장정보 제공 API 서비스2」(15059437)
+ *                     위치 · 총 면수 · 공영/민영 구분. 대흥동·은행동 포함
+ *   data/realtime.xml 「대전광역시_실시간 주차장 정보」(15083717)
+ *                     전화번호 · 정확한 요금표. 좌표로 짝을 맞춘다
  *
- * ★ 응답 구조 (실제 호출로 확인)
- *   response > header > resultCode · resultMsg · totalCnt(756) · numOfRows · pageNo
- *   response > body > PARKING-LIST > PARKING[]
+ * ★ 왜 실시간 잔여 대수를 안 쓰는가 (전수 조사 결과)
+ *   실시간 API 는 실제로 갱신된다 — 갤러리아 타임월드가 30분 만에 547 → 550.
+ *   그러나 대흥동·은행동 16곳 중 resQty 에 값이 있는 곳은 대흥동제3노외 한 곳뿐이고,
+ *   그 값(33)마저 정적 API 와 동일해 갱신되지 않는다. 16곳 전부 totalQty 가 비어 있다.
+ *   실시간 연동은 서구 대형 상업시설에만 되어 있고 원도심은 대상이 아니다.
+ *   그래서 available 은 null 로 내려보내고 화면에 "확인 불가"로 표시한다.
+ *   0 으로 채우면 "만차"로 보이는데 사실은 "모른다"이다.
  *
- * ★ 문서에 없는 필드가 실제로는 내려온다
- *   AVAILABLE_TOTAL_LOT · AVAILABLE_RES_QTY
- *   AVAILABLE_RES_QTY 가 잔여 대수로 보이지만, 실시간인지 고정값인지 검증 전이다.
- *   검증되기 전에는 REALTIME 을 false 로 두고 available 을 null 로 내려보낸다.
- *   "모른다"를 "몇 자리 남았다"로 바꿔 말하는 것이 이 서비스에서 가장 위험한 거짓말이다.
+ * ★ 왜 파일을 읽는가
+ *   공공데이터 게이트웨이가 서버(Node) 요청을 HTTP_ERROR(04) 로 거부한다.
+ *   브라우저·curl 은 되는데 fetch·Invoke-WebRequest 는 안 된다.
+ *   데이터가 정적이라 매번 호출할 이유가 없어 응답을 저장소에 넣고 읽는다.
+ *   갱신이 필요하면 두 파일만 교체하면 된다.
  */
 
-const ENDPOINT = 'http://apis.data.go.kr/6300000/openapi/rest2/getParkingInfoList.do'
-
-/**
- * ★ 검증 스위치
- *   10분 간격으로 두 번 호출해 AVAILABLE_RES_QTY 가 바뀌면 실시간이 맞다.
- *   확인되면 true 로 바꾼다. 그 전까지는 총 면수만 보여준다.
- */
+/** 실시간 잔여 대수를 쓸지. 원도심 커버리지가 생기면 true 로 바꾼다 */
 const REALTIME = false
 
-/** 공공 API 호출 간격. 개발계정은 하루 10,000회다 */
 const TTL_MS = 60_000
 
-/** 전체 756건이라 한 번에 다 받는다 */
-const NUM_OF_ROWS = 1000
-
-/**
- * 시연 대상 지역만 남긴다 (대흥동 · 은행동 · 소제동).
- * 대전 전체를 지도에 뿌리면 못 쓴다.
- * 이 네 값이 목업 지도 0~100% 좌표계의 기준이기도 하다.
- */
+/** 시연 대상 지역 (대흥동 · 은행동 · 소제동). 목업 지도 0~100% 좌표계의 기준이기도 하다 */
 const BBOX = { minLat: 36.3150, maxLat: 36.3450, minLng: 127.4150, maxLng: 127.4450 }
+
+/** 두 데이터셋을 좌표로 맞출 때 허용 오차 (약 11m) */
+const MATCH_EPS = 0.0001
 
 const clamp = (v: number) => Math.max(4, Math.min(96, v))
 
-/** 실제 위경도 → 목업 지도의 0~100%.
- *  MapCanvas 가 퍼센트로 그리므로 36.32 를 그대로 넣으면 화면 밖으로 나간다.
- *  위도는 클수록 북쪽(위)이라 y 를 뒤집는다. */
+/** 실제 위경도 → 목업 지도의 0~100%. 위도는 클수록 북쪽이라 y 를 뒤집는다 */
 function toPercent(lat: number, lng: number) {
   return {
     y: clamp(((BBOX.maxLat - lat) / (BBOX.maxLat - BBOX.minLat)) * 100),
@@ -60,7 +52,7 @@ function toPercent(lat: number, lng: number) {
   }
 }
 
-/** 이 API 는 값이 없을 때 빈 칸이 아니라 'NONE' 을 보낸다 */
+/** 이 API 들은 값이 없을 때 빈 칸이 아니라 'NONE' 을 보낸다 */
 const str = (v: unknown) => {
   const s = String(v ?? '').trim()
   return s === 'NONE' ? '' : s
@@ -70,22 +62,12 @@ const num = (v: unknown) => {
   return Number.isFinite(n) ? n : 0
 }
 
-/** '대덕구 중리동 363-23' → '대덕구' */
 const guOf = (addr: string) => addr.split(/\s+/).find((w) => w.endsWith('구')) ?? ''
 
-/** '00:00' ~ '24:00' 은 24시간으로 읽는다 */
 function hoursText(open: string, close: string) {
   if (!open || !close) return ''
   if (open.startsWith('00:00') && close.startsWith('24:00')) return '24시간'
   return `${open} ~ ${close}`
-}
-
-/** 이 API 에 요금표는 없다. 무료시간과 특이사항으로 문구를 만든다 */
-function feeText(freeMin: number, additional: string) {
-  const parts: string[] = []
-  if (freeMin > 0) parts.push(`최초 ${freeMin}분 무료`)
-  if (additional) parts.push(additional)
-  return parts.join(' · ')
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -115,21 +97,113 @@ interface Lot {
   near: [string, number][]
 }
 
-/** 워밍된 서버 인스턴스 안에서만 사는 캐시. 팀 규모엔 이걸로 충분하다 */
+/** 실시간 데이터셋에서 뽑아 둘 값 */
+interface RtInfo {
+  lat: number
+  lng: number
+  tel: string
+  fee: string
+  resQty: number | null
+}
+
 let cache: { at: number; data: Lot[] } | null = null
 
-async function fetchLots(): Promise<Lot[]> {
-  // ★ 공공데이터포털 게이트웨이가 서버(Node) 요청을 HTTP_ERROR(04) 로 거부한다.
-  //   브라우저·curl 로는 되지만 fetch 로는 안 된다. 원인 불명.
-  //   이 데이터는 실시간이 아니라 정적이므로, 내려받은 응답을 저장소에 넣고 읽는다.
-  //   갱신이 필요하면 data/lots.xml 을 새로 받아 교체하면 된다.
-  const fileText = await readFile(path.join(process.cwd(), 'data', 'lots.xml'), 'utf-8')
+const dataPath = (f: string) => path.join(process.cwd(), 'data', f)
+
+/**
+ * 요금 문구를 만든다.
+ * 실시간 데이터셋에는 기본시간·기본요금·추가시간·추가요금이 숫자로 들어 있어서
+ * "10분 300원 · 이후 15분당 300원" 같은 실제 안내를 만들 수 있다.
+ * 정적 데이터셋에는 무료시간뿐이라 "최초 30분 무료" 가 한계였다.
+ */
+function feeFromRealtime(item: Record<string, unknown>): string {
+  const type = str(item.type)
+  if (type === '무료') return '무료'
+
+  const baseTime = num(item.baseTime)
+  const baseRate = num(item.baseRate)
+  const addTime = num(item.addTime)
+  const addRate = num(item.addRate)
+
+  const parts: string[] = []
+  if (baseTime > 0 && baseRate > 0) {
+    parts.push(`${baseTime}분 ${baseRate.toLocaleString()}원`)
+  } else if (baseTime > 0 && baseRate === 0) {
+    parts.push(`최초 ${baseTime}분 무료`)
+  }
+  if (addTime > 0 && addRate > 0) {
+    parts.push(`이후 ${addTime}분당 ${addRate.toLocaleString()}원`)
+  }
+  return parts.join(' · ')
+}
+
+/** 정적 데이터셋만 가지고 만드는 요금 문구 (짝을 못 찾았을 때의 대비) */
+function feeFromStatic(freeMin: number, additional: string): string {
+  const parts: string[] = []
+  if (freeMin > 0) parts.push(`최초 ${freeMin}분 무료`)
+  if (additional) parts.push(additional)
+  return parts.join(' · ')
+}
+
+/**
+ * 실시간 데이터셋을 읽어 좌표별 정보로 만든다.
+ * 16개 페이지를 이어붙인 파일이라 <?xml?> 과 <response> 가 여러 번 반복된다.
+ * 통째로 파싱하면 실패하므로 <item> 블록만 뽑아 하나씩 읽는다.
+ */
+async function loadRealtime(): Promise<RtInfo[]> {
+  let raw: string
+  try {
+    raw = await readFile(dataPath('realtime.xml'), 'utf-8')
+  } catch {
+    return []   // 파일이 없어도 정적 데이터만으로 동작한다
+  }
+
+  const xml = raw.replace(/&(?!(amp|lt|gt|quot|apos|#\d+);)/g, '&amp;')
+  const parser = new XMLParser({ ignoreAttributes: true, parseTagValue: false })
+  const out: RtInfo[] = []
+
+  for (const m of xml.matchAll(/<item>[\s\S]*?<\/item>/g)) {
+    let node: Record<string, unknown>
+    try {
+      node = (parser.parse(m[0]) as { item?: Record<string, unknown> }).item ?? {}
+    } catch {
+      continue
+    }
+
+    const lat = num(node.lat)
+    const lng = num(node.lon)
+    if (!lat || !lng) continue
+
+    const q = str(node.resQty)
+    out.push({
+      lat,
+      lng,
+      tel: str(node.tel),
+      fee: feeFromRealtime(node),
+      resQty: q === '' ? null : Number(q),
+    })
+  }
+
+  return out
+}
+
+/** 좌표가 같은 실시간 항목을 찾는다. 이름은 표기가 달라 못 쓴다
+ *  ('대흥동제3노외' vs '대흥동 제3노외 주차장') */
+function matchRealtime(rt: RtInfo[], lat: number, lng: number): RtInfo | undefined {
+  return rt.find(
+    (r) => Math.abs(r.lat - lat) < MATCH_EPS && Math.abs(r.lng - lng) < MATCH_EPS,
+  )
+}
+
+async function loadLots(): Promise<Lot[]> {
+  const rt = await loadRealtime()
+
   // 이 API 는 주차장 이름에 & 를 이스케이프 없이 넣어 보낸다
   // ('대전신세계 Art & Science') — 그대로 파싱하면 그 지점에서 XML 이 끊긴다
+  const fileText = await readFile(dataPath('lots.xml'), 'utf-8')
   const xml = fileText.replace(/&(?!(amp|lt|gt|quot|apos|#\d+);)/g, '&amp;')
 
-  const parsed = new XMLParser({ ignoreAttributes: true, parseTagValue: false })
-    .parse(xml)
+  const parsed = new XMLParser({ ignoreAttributes: true, parseTagValue: false }).parse(xml)
 
   const code = String(parsed?.response?.header?.resultCode ?? '')
   if (code && code !== '00') {
@@ -141,35 +215,35 @@ async function fetchLots(): Promise<Lot[]> {
   const now = Date.now()
 
   return rows
-    .filter((r) => str(r.DIVIDE_NUM) === '6')      // 6:공영 / 7:민간 — 공영만 얹는다
+    .filter((r) => str(r.DIVIDE_NUM) === '6')      // 6:공영 / 7:민간
     .map((r): Lot => {
       const realLat = num(r.LAT)
       const realLng = num(r.LON)
       const { x, y } = toPercent(realLat, realLng)
+      const hit = matchRealtime(rt, realLat, realLng)
 
-      // 총 면수 — 두 필드가 서로 어긋나는 데이터가 있어 큰 쪽을 믿는다
-      //  (예: 송촌주민센터 TOTAL_PARKING_LOT 72 < AVAILABLE_TOTAL_LOT 93)
+      // 총 면수 — 두 필드가 어긋나는 데이터가 있어 큰 쪽을 믿는다
       const total = Math.max(num(r.TOTAL_PARKING_LOT), num(r.AVAILABLE_TOTAL_LOT))
 
-      // 잔여 대수 — 실시간이 검증되기 전에는 쓰지 않는다
+      // 잔여 대수 — 실시간 커버리지가 없어 기본은 null
       let available: number | null = null
-      if (REALTIME) {
-        const q = num(r.AVAILABLE_RES_QTY)
-        available = Math.max(0, Math.min(total, q))
+      if (REALTIME && hit?.resQty != null && total > 0) {
+        available = Math.max(0, Math.min(total, hit.resQty))
       }
 
       return {
         id: str(r.PARKING_ID),
         name: str(r.NAME),
-        gu: guOf(str(r.ADDR01)),
+        gu: guOf(str(r.ADDR01)) || guOf(str(r.ADDR02)),
         addr: str(r.ADDR02) || str(r.ADDR01),
         type: TYPE_LABEL[str(r.TYPE_NUM)] ?? '공영주차장',
         total,
         available,
-        fee: feeText(num(r.FREECHARGE_BASETIME), str(r.ADDITIONAL)),
+        // 실시간 데이터셋의 요금표가 훨씬 정확하다. 짝을 못 찾으면 정적 값으로 돌아간다
+        fee: hit?.fee || feeFromStatic(num(r.FREECHARGE_BASETIME), str(r.ADDITIONAL)),
         dayMax: '',
         hours: hoursText(str(r.WEEKDAY_OPEN_TIME), str(r.WEEKDAY_CLOSE_TIME)),
-        tel: '',
+        tel: hit?.tel && !/^010-1234-5678$/.test(hit.tel) ? hit.tel : '',                        // 정적 데이터셋에는 전화번호가 없다
         lat: y,
         lng: x,
         realLat,
@@ -183,7 +257,7 @@ async function fetchLots(): Promise<Lot[]> {
       l.realLat >= BBOX.minLat && l.realLat <= BBOX.maxLat &&
       l.realLng >= BBOX.minLng && l.realLng <= BBOX.maxLng,
     )
-    .slice(0, 12)                                   // 지도가 감당할 만큼만
+    .slice(0, 12)
 }
 
 export async function GET() {
@@ -192,13 +266,13 @@ export async function GET() {
       return NextResponse.json(cache.data, { headers: { 'Cache-Control': 'no-store' } })
     }
 
-    const data = await fetchLots()
+    const data = await loadLots()
     cache = { at: Date.now(), data }
     return NextResponse.json(data, { headers: { 'Cache-Control': 'no-store' } })
   } catch (e) {
     console.error('[GET /api/lots]', e)
 
-    // 한도 초과·장애 때 화면을 비우지 않는다. 오래된 값이 빈 지도보다 낫다
+    // 화면을 비우지 않는다. 오래된 값이 빈 지도보다 낫다
     if (cache) {
       return NextResponse.json(cache.data, { headers: { 'Cache-Control': 'no-store' } })
     }
