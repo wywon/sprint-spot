@@ -6,6 +6,9 @@ npm-debug.log*
 # 환경변수 (COM 포트, DB 계정/비밀번호 — 절대 커밋 금지)
 .env
 
+# Claude 데스크톱 앱이 만드는 임시 폴더
+Claude outputs/
+
 # OS
 Thumbs.db
 desktop.ini
