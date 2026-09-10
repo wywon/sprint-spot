@@ -363,21 +363,33 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
     };
   }, [mounted, simOn, focusId, pushToast]);
 
-  /* ── 공영주차장 ──────────────────────────────────────────────
-     대전시 공공 API 연동 전이라 담당 엔드포인트가 없다. 시뮬레이터를 남겨 둔다.
-     TODO 실제 API 가 생기면 위 폴링 안으로 옮긴다 */
+/* ── 공영주차장 — 30초 폴링 ────────────────────────────────
+     서버가 1분 캐시를 두므로 30초면 충분하다 */
   useEffect(() => {
     if (!mounted || !simOn) return;
-    const t = setInterval(() => {
-      setLots((prev) =>
-        prev.map((l) => ({
-          ...l,
-          available: Math.max(0, Math.min(l.total, l.available + rnd(-4, 4))),
-          updated: Date.now(),
-        }))
-      );
-    }, 9000);
-    return () => clearInterval(t);
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    async function tick() {
+      if (!alive) return;
+      if (typeof document !== 'undefined' && document.hidden) {
+        timer = setTimeout(tick, 30_000);
+        return;
+      }
+      try {
+        const r = await fetch('/api/lots', { cache: 'no-store' });
+        if (r.ok) {
+          const data = (await r.json()) as PublicLot[];
+          if (alive && Array.isArray(data) && data.length) setLots(data);
+        }
+      } catch (e) {
+        console.error('[lots]', e);   // 실패해도 마지막 값을 유지한다
+      }
+      timer = setTimeout(tick, 30_000);
+    }
+
+    void tick();
+    return () => { alive = false; if (timer) clearTimeout(timer); };
   }, [mounted, simOn]);
 
   /* 정리 중 → 빈 자리 자동 전환.
