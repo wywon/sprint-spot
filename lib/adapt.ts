@@ -32,6 +32,7 @@ export interface ApiStoreListItem {
   lat: number;
   lng: number;
   image?: string;
+  price?: string; // [b4] 이슈때 추가
   tags?: string[];
   rating?: number;
   reviews?: number;
@@ -83,7 +84,7 @@ export function adaptStore(a: ApiStoreListItem, prev?: PartnerStore): PartnerSto
     addr: a.address ?? prev?.addr ?? '',
     tel: prev?.tel ?? '',            // 목록 응답에 없음 — 상세에서 채운다
     open,
-    price: prev?.price ?? '',        // API 에 없는 필드
+    price: a.price ?? prev?.price ?? '',        // API 에 없는 필드
     rating: a.rating ?? prev?.rating ?? 0,
     reviews: a.reviews ?? prev?.reviews ?? 0,
     tags: a.tags ?? prev?.tags ?? [],

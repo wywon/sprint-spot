@@ -36,6 +36,14 @@ const SEED_MONTH_RES = true;
 
 const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000);
 
+/**
+ * mock 의 phone 은 '010-2211-1234' 형식이지만 DB 에는 숫자만 넣는다.
+ * README API 4 가 숫자 11자리로 정했고, 형식이 섞이면
+ * GET /api/reservations?phone= 이 한쪽만 찾는다.
+ * mock.ts 는 화면 표시용이므로 그대로 둔다.
+ */
+const digits = (v: string) => v.replace(/\D/g, '');
+
 const iso = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
@@ -184,7 +192,7 @@ const customerRes: Prisma.ReservationCreateManyInput[] = INITIAL_RESERVATIONS.ma
   seatType: r.seatType,
   status: r.status as ReservationStatus,
   name: r.name,
-  phone: r.phone,
+  phone: digits(r.phone),
   memo: r.memo ?? '',
   parkingAlert: r.parkingAlert ?? false,
   exited: r.exited ?? false,
@@ -213,7 +221,7 @@ const adminRes: Prisma.ReservationCreateManyInput[] = ADMIN_RES.map((a) => ({
   seatType: '상관없음',      // ADMIN_RES 에 없는 값. 손님 예약 폼의 기본값과 맞춘다
   status: a.status as ReservationStatus,
   name: a.name,
-  phone: a.phone,
+  phone: digits(a.phone),
   memo: a.memo ?? '',
   exited: (a.status as ReservationStatus) === 'done',
 }));
@@ -240,7 +248,7 @@ const monthRes: Prisma.ReservationCreateManyInput[] = !SEED_MONTH_RES ? [] :
         seatType: '상관없음',
         status: (past ? 'done' : 'upcoming') as ReservationStatus,
         name: item.name,
-        phone: `010-9000-${n}`,
+        phone: `0109000${n}`,
         memo: '',
         exited: past,
       };

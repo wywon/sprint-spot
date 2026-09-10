@@ -16,6 +16,7 @@
   "dependencies": {
     "@prisma/client": "^6.19.3",
     "fast-xml-parser": "^5.11.1",
+    "@supabase/supabase-js": "^2.116.0",
     "next": "^15.5.25",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

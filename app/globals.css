@@ -52,3 +52,23 @@ body {
   background: linear-gradient(90deg, #eef2f8 0px, #e3e7ed 200px, #eef2f8 400px);
   background-size: 800px 100%;
 }
+
+/* 앱 설정 — 글자 크기 / 움직임 줄이기
+   화면 코드가 전부 고정 px(text-[13.5px])이라 font-size 로는 안 커진다.
+   그래서 컨테이너를 zoom 으로 배율 조정하고, 폭·높이를 반대로 나눠 보정한다.
+   보정하지 않으면 확대한 만큼 폰 프레임 밖으로 넘친다. */
+:root { --spot-zoom: 1; }
+html[data-font='small'] { --spot-zoom: 0.92; }
+html[data-font='large'] { --spot-zoom: 1.14; }
+
+.spot-zoom {
+  zoom: var(--spot-zoom);
+}
+
+html[data-motion='less'] *,
+html[data-motion='less'] *::before,
+html[data-motion='less'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}

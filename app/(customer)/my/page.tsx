@@ -7,6 +7,7 @@ import { cx } from '@/lib/format';
 // import { ME } from '@/lib/mock';
 import { useApp } from '@/lib/store';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 /**
  * 마이페이지
@@ -95,14 +96,31 @@ export default function MyPage() {
 
         {/* 배치만 — 4주차 이후 채운다 */}
         <Card className="p-1">
-          {([['history', '최근 본 매장'], ['settings', '앱 설정'], ['sparkle', '접근성']] as const).map(([i, t]) => (
-            <button key={t} className="w-full flex items-center gap-3 px-3.5 py-3.5 hover:bg-ink-50 rounded-xl transition-colors">
-              <Icon n={i} s={19} cls="text-ink-400 shrink-0" />
-              <div className="grow text-left text-[13.5px] font-bold text-ink-800">{t}</div>
-              <Icon n="chevR" s={16} cls="text-ink-300 shrink-0" />
-            </button>
-          ))}
-        </Card>
+  {([
+    ['history',  '최근 본 매장', '/my/recent'],
+    ['settings', '앱 설정',      '/my/settings'],
+  ] as const).map(([i, t, href]) => {
+    const cls =
+      'w-full flex items-center gap-3 px-3.5 py-3.5 hover:bg-ink-50 rounded-xl transition-colors';
+    const inner = (
+      <>
+        <Icon n={i} s={19} cls="text-ink-400 shrink-0" />
+        <div className="grow text-left text-[13.5px] font-bold text-ink-800">{t}</div>
+        <Icon n="chevR" s={16} cls="text-ink-300 shrink-0" />
+      </>
+    );
+
+    return href ? (
+      <Link key={t} href={href} className={cls}>
+        {inner}
+      </Link>
+    ) : (
+      <button key={t} type="button" className={cls}>
+        {inner}
+      </button>
+    );
+  })}
+</Card>
 
         {/* 시뮬레이션 토글 */}
         <Card className="p-4">
