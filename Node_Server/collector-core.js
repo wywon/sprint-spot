@@ -38,6 +38,10 @@ let started = false;
 let serialPortPath = null;
 let serialBaudRate = 9600;
 
+// 상태가 바뀌었을 때 알려줄 곳 (server.js 가 넣어준다).
+// 앱 서버로 푸시할 때 쓴다. 없으면 아무 일도 안 한다.
+let onChange = null;
+
 // DB 에 저장되어 있다고 알고 있는 현재 상태. [0]=1번 ... [9]=10번
 let knownState = new Array(TOTAL_SPACES).fill(null);
 
@@ -174,6 +178,16 @@ async function onLine(rawLine) {
       console.log(
         `[${time}] ${detail}  →  주차 ${occupiedSpaces} / 빈자리 ${availableSpaces}  (DB 저장됨)`
       );
+
+      // 바뀐 걸 바깥에 알린다 (앱 서버 푸시 등).
+      // 여기서 오류가 나도 수집은 계속되어야 하므로 통째로 감싼다.
+      if (onChange) {
+        try {
+          onChange(result.spaces, changes);
+        } catch (e) {
+          console.error('[수집기] 변경 알림 처리 중 오류:', e.message);
+        }
+      }
     }
     // 변화가 없으면 출력하지 않는다. 1.2초마다 같은 줄이 쌓이면 못 본다.
   } catch (err) {
@@ -275,6 +289,8 @@ async function start(options = {}) {
   const useMock = !!options.useMock;
   stats.mode = useMock ? 'mock' : 'serial';
 
+  onChange = typeof options.onChange === 'function' ? options.onChange : null;
+
   if (!useMock && !serialPortPath) {
     started = false;
     throw new Error('.env 에 SERIAL_PORT 가 없습니다. (--mock 으로 실행하면 필요 없습니다)');
@@ -327,9 +343,25 @@ async function stop() {
   started = false;
 }
 
+// ==========================================
+// 바깥에서 상태를 강제로 바꿨을 때 알려주는 통로
+//
+// POST /api/parking/... 로 DB 를 직접 고치면
+// 수집기가 기억하는 knownState 와 어긋난다.
+// 그러면 센서 값이 바뀔 때까지 수집기가 그 칸을 건드리지 않아
+// 잘못된 값이 계속 남는다. 그래서 여기서 같이 맞춰준다.
+// ==========================================
+function setKnownState(spaceNumber, occupied) {
+  if (spaceNumber < 1 || spaceNumber > TOTAL_SPACES) return false;
+
+  knownState[spaceNumber - 1] = !!occupied;
+  return true;
+}
+
 module.exports = {
   start,
   stop,
   stats,
+  setKnownState,
   TOTAL_SPACES,
 };
