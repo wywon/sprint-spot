@@ -409,58 +409,113 @@ function InfoField({
 
 /* ── 테이블 구성 · 배치도 편집 ─────────────────────────── */
 
+/**
+ * [b6] 테이블 배치도 — 저장이 서버까지 간다
+ *
+ * ★ 왜 code 로 고르는가
+ *   DB 의 id 는 's1_t1' 이고 code 가 't1' 이다. 새로 추가한 테이블은 아직 DB 에
+ *   없어서 id 가 없다. 화면과 서버가 테이블을 알아보는 기준을 code 하나로 통일한다.
+ *
+ * ★ 왜 편집 중 폴링을 멈추는가
+ *   3초마다 서버를 다시 읽어 store 를 갈아 끼우므로, 안 멈추면 방금 옮긴 테이블이
+ *   3초 뒤 제자리로 돌아간다. 매장 정보 탭이 draft 를 쓰는 것과 같은 이유다.
+ */
 function SetTables({ store }: { store: PartnerStore }) {
-  const { setTables, pushToast } = useApp();
+  const { setTables, setEditing, pushToast } = useApp();
   const [edit, setEdit] = useState(false);
   const [draft, setDraft] = useState<StoreTable[] | null>(null);
   const [sel, setSel] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const list = edit && draft ? draft : store.tables;
   const view = { ...store, tables: list };
-  const t = sel ? list.find((x) => x.id === sel) ?? null : null;
+  const t = sel ? list.find((x) => x.code === sel) ?? null : null;
   const seats = list.reduce((a, b) => a + b.seats, 0);
 
-  const start = () => { setDraft(store.tables.map((x) => ({ ...x }))); setSel(store.tables[0]?.id ?? null); setEdit(true); };
+  useEffect(() => {
+    setEditing(edit);
+    return () => setEditing(false);
+  }, [edit, setEditing]);
+
+  /* 저장하지 않고 탭을 닫으려 하면 붙잡는다 */
+  useEffect(() => {
+    if (!edit) return;
+    const h = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, [edit]);
+
+  const start = () => {
+    setDraft(store.tables.map((x) => ({ ...x })));
+    setSel(store.tables[0]?.code ?? null);
+    setEdit(true);
+  };
   const cancel = () => { setEdit(false); setDraft(null); setSel(null); };
-  const save = () => {
-    if (!draft) return;
-    setTables(store.id, draft, { who: '최영호', msg: `테이블 배치도 수정 · ${draft.length}개`, tone: 'brand' });
-    pushToast({ title: '테이블 배치도를 저장했어요', desc: `총 ${draft.length}개 · ${draft.reduce((a, b) => a + b.seats, 0)}석`, tone: 'ok', icon: 'check' });
+
+  /* ★ 실패하면 편집 모드를 닫지 않는다. 몇 분 걸려 옮긴 배치를 오류 한 번에
+       버리게 하면 안 된다. 실패 안내 문구는 서버가 보내고 store.tsx 가 띄운다. */
+  const save = async () => {
+    if (!draft || saving) return;
+    setSaving(true);
+    const ok = await setTables(store.id, draft, {
+      who: '최영호', msg: `테이블 배치도 수정 · ${draft.length}개`, tone: 'brand',
+    });
+    setSaving(false);
+    if (!ok) return;
+
+    pushToast({
+      title: '테이블 배치도를 저장했어요',
+      desc: `총 ${draft.length}개 · ${draft.reduce((a, b) => a + b.seats, 0)}석`,
+      tone: 'ok', icon: 'check',
+    });
     cancel();
   };
 
-  const patch = (id: string, p: Partial<StoreTable>) =>
-    setDraft((d) => (d ? d.map((x) => (x.id === id ? { ...x, ...p } : x)) : d));
+  const patch = (code: string, p: Partial<StoreTable>) =>
+    setDraft((d) => (d ? d.map((x) => (x.code === code ? { ...x, ...p } : x)) : d));
   const taken = (r: number, c: number, except: string | null) =>
-    !!draft?.some((x) => x.id !== except && x.row === r && x.col === c);
+    !!draft?.some((x) => x.code !== except && x.row === r && x.col === c);
   const move = (dr: number, dc: number) => {
     if (!t) return;
     const nr = Math.max(0, Math.min(5, t.row + dr));
     const nc = Math.max(0, Math.min(3, t.col + dc));
-    if (taken(nr, nc, t.id)) return;
-    patch(t.id, { row: nr, col: nc });
+    if (taken(nr, nc, t.code)) return;
+    patch(t.code, { row: nr, col: nc });
   };
+
+  /* 못 가는 방향은 눌러도 아무 일이 없어 고장난 것처럼 보인다. 미리 꺼 둔다 */
+  const canMove = (dr: number, dc: number) => {
+    if (!t) return false;
+    const nr = t.row + dr;
+    const nc = t.col + dc;
+    if (nr < 0 || nr > 5 || nc < 0 || nc > 3) return false;
+    return !taken(nr, nc, t.code);
+  };
+
   const add = () => {
     if (!draft) return;
     for (let r = 0; r < 6; r++) {
       for (let c = 0; c < 4; c++) {
         if (!taken(r, c, null)) {
-          const nums = draft.map((x) => parseInt(x.id.replace(/\D/g, ''), 10) || 0);
-          const id = 't' + (Math.max(0, ...nums) + 1);
+          // ★ code 로 번호를 만든다. id('s1_t1')에서 숫자를 뽑으면 11 이 나온다
+          const nums = draft.map((x) => parseInt(x.code.replace(/\D/g, ''), 10) || 0);
+          const code = 't' + (Math.max(0, ...nums) + 1);
           setDraft((d) => (d ? [...d, {
-            id, seats: 4, status: 'available', row: r, col: c, w: 1,
+            id: code,        // 아직 DB 에 없다. 저장 뒤 서버가 준 id 로 채워진다
+            code, seats: 4, status: 'available' as const, row: r, col: c, w: 1,
             guest: null, since: null, cleaningAt: null, resAt: null, resName: null, resParty: null,
           }] : d));
-          setSel(id);
+          setSel(code);
           return;
         }
       }
     }
     pushToast({ title: '더 놓을 자리가 없어요', desc: '기존 테이블을 옮긴 뒤 추가해 주세요', tone: 'warn', icon: 'alert' });
   };
+
   const del = () => {
     if (!t) return;
-    setDraft((d) => (d ? d.filter((x) => x.id !== t.id) : d));
+    setDraft((d) => (d ? d.filter((x) => x.code !== t.code) : d));
     setSel(null);
   };
 
@@ -474,8 +529,10 @@ function SetTables({ store }: { store: PartnerStore }) {
           </div>
           {edit ? (
             <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={cancel}>취소</Button>
-              <Button variant="primary" size="sm" icon="check" onClick={save}>배치 저장</Button>
+              <Button variant="ghost" size="sm" onClick={cancel} disabled={saving}>취소</Button>
+              <Button variant="primary" size="sm" icon="check" onClick={save} disabled={saving}>
+                {saving ? '저장하는 중…' : '배치 저장'}
+              </Button>
             </div>
           ) : (
             <Button variant="outline" size="sm" icon="pencil" onClick={start}>배치도 편집</Button>
@@ -487,14 +544,15 @@ function SetTables({ store }: { store: PartnerStore }) {
             <Icon n="question" s={16} cls="text-brand-600 shrink-0 mt-px" />
             <div className="text-[12px] font-medium text-brand-700 leading-relaxed">
               테이블을 눌러 선택한 뒤 오른쪽에서 <b>좌석 수 · 위치 · 폭</b>을 바꿔 주세요.
-              손님에게는 <b>테이블 번호가 보이지 않고</b>, 좌석 수와 남은 자리 수만 전달됩니다.
+              편집하는 동안에는 <b>실시간 갱신이 멈춥니다.</b> 손님에게는 테이블 번호가 보이지 않고,
+              좌석 수와 남은 자리 수만 전달됩니다.
             </div>
           </div>
         )}
 
         <div className="rounded-2xl bg-ink-50 border border-ink-200 p-6">
           <div className="text-[10px] font-extrabold text-ink-400 tracking-[.25em] text-center mb-4">창 　 측</div>
-          <TableMap store={view} cols={4} edit={edit} onSelect={(x) => edit && setSel(x.id)} selectedId={edit ? sel : null} />
+          <TableMap store={view} cols={4} edit={edit} onSelect={(x) => edit && setSel(x.code)} selectedId={edit ? sel : null} />
           <div className="mt-5 h-8 rounded-lg bg-ink-900 text-white text-[10px] font-extrabold grid place-items-center tracking-[.2em]">
             ▲ 출 입 구 · 카 운 터
           </div>
@@ -512,27 +570,34 @@ function SetTables({ store }: { store: PartnerStore }) {
 
             <div className="text-[11.5px] font-extrabold text-ink-500 mb-2">좌석 수</div>
             <div className="flex items-center gap-2 mb-5">
-              <Button variant="outline" size="sm" icon="minus" onClick={() => patch(t.id, { seats: Math.max(1, t.seats - 1) })} />
+              <Button variant="outline" size="sm" icon="minus" onClick={() => patch(t.code, { seats: Math.max(1, t.seats - 1) })} />
               <span className="grow text-center text-[18px] font-extrabold text-ink-900 tnum">
                 {t.seats}<span className="text-[12px] text-ink-500 ml-0.5">석</span>
               </span>
-              <Button variant="outline" size="sm" icon="plus" onClick={() => patch(t.id, { seats: Math.min(12, t.seats + 1) })} />
+              <Button variant="outline" size="sm" icon="plus" onClick={() => patch(t.code, { seats: Math.min(12, t.seats + 1) })} />
             </div>
 
             <div className="text-[11.5px] font-extrabold text-ink-500 mb-2">위치 이동</div>
-            <div className="grid grid-cols-3 gap-1.5 w-[148px] mx-auto mb-5">
-              <span /><Button variant="outline" size="sm" onClick={() => move(-1, 0)}>↑</Button><span />
-              <Button variant="outline" size="sm" onClick={() => move(0, -1)}>←</Button>
+            <div className="grid grid-cols-3 gap-1.5 w-[148px] mx-auto mb-2">
+              <span />
+              <Button variant="outline" size="sm" disabled={!canMove(-1, 0)} onClick={() => move(-1, 0)}>↑</Button>
+              <span />
+              <Button variant="outline" size="sm" disabled={!canMove(0, -1)} onClick={() => move(0, -1)}>←</Button>
               <div className="h-9 rounded-xl bg-ink-100 grid place-items-center text-[10.5px] font-extrabold text-ink-400">이동</div>
-              <Button variant="outline" size="sm" onClick={() => move(0, 1)}>→</Button>
-              <span /><Button variant="outline" size="sm" onClick={() => move(1, 0)}>↓</Button><span />
+              <Button variant="outline" size="sm" disabled={!canMove(0, 1)} onClick={() => move(0, 1)}>→</Button>
+              <span />
+              <Button variant="outline" size="sm" disabled={!canMove(1, 0)} onClick={() => move(1, 0)}>↓</Button>
+              <span />
+            </div>
+            <div className="text-[11px] font-medium text-ink-500 text-center mb-5 leading-relaxed">
+              다른 테이블이 있는 칸으로는 옮길 수 없어요. 먼저 그 테이블을 옮겨 주세요.
             </div>
 
             <div className="text-[11.5px] font-extrabold text-ink-500 mb-2">차지하는 폭</div>
             <Segmented
               full size="sm"
               value={String(t.w || 1)}
-              onChange={(v) => patch(t.id, { w: Number(v) })}
+              onChange={(v) => patch(t.code, { w: Number(v) })}
               options={[{ value: '1', label: '1칸' }, { value: '2', label: '2칸 (긴 테이블)' }]}
             />
 
@@ -540,9 +605,14 @@ function SetTables({ store }: { store: PartnerStore }) {
             <Segmented
               full size="sm"
               value={t.status === 'disabled' ? 'off' : 'on'}
-              onChange={(v) => patch(t.id, { status: v === 'off' ? 'disabled' : 'available' })}
+              onChange={(v) => patch(t.code, { status: v === 'off' ? 'disabled' : 'available' })}
               options={[{ value: 'on', label: '사용' }, { value: 'off', label: '사용 안 함' }]}
             />
+            {t.status !== 'available' && t.status !== 'disabled' && (
+              <div className="mt-2 text-[11.5px] font-bold text-warn-600 leading-relaxed">
+                지금 사용 중인 자리라 사용 여부는 바뀌지 않습니다. 손님이 나간 뒤에 바꿔 주세요.
+              </div>
+            )}
 
             <div className="flex gap-2 mt-5 pt-5 border-t border-ink-200">
               <Button variant="outline" size="sm" icon="plus" full onClick={add}>테이블 추가</Button>
@@ -581,22 +651,53 @@ function SetTables({ store }: { store: PartnerStore }) {
 
 /* ── 주차장 구성 · 배치도 편집 ─────────────────────────── */
 
+/**
+ * [b6] 주차장 배치도
+ *
+ * ★ 주차면 번호(code)는 센서 쪽 설정과 글자 하나까지 같아야 한다.
+ *   POST /api/detect 가 code 로만 주차면을 찾기 때문이다. 여기서 'A1' 을
+ *   'P01' 로 바꾸면 센서는 계속 A1 을 보내고 화면은 영영 안 바뀐다.
+ */
 function SetParking({ store }: { store: PartnerStore }) {
-  const { setSlots, pushToast } = useApp();
+  const { setSlots, setEditing, pushToast } = useApp();
   const [edit, setEdit] = useState(false);
   const [draft, setDraft] = useState<ParkingSlot[] | null>(null);
   const [sel, setSel] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const list = edit && draft ? draft : store.parking.slots;
   // 편집 중에는 센서 오류 상태를 무시하고 구조만 보여준다
   const view = { ...store, sensor: 'online' as const, parking: { ...store.parking, slots: list } };
   const s = sel ? list.find((x) => x.code === sel) ?? null : null;
 
-  const start = () => { setDraft(store.parking.slots.map((x) => ({ ...x }))); setSel(store.parking.slots[0]?.code ?? null); setEdit(true); };
+  useEffect(() => {
+    setEditing(edit);
+    return () => setEditing(false);
+  }, [edit, setEditing]);
+
+  useEffect(() => {
+    if (!edit) return;
+    const h = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, [edit]);
+
+  const start = () => {
+    setDraft(store.parking.slots.map((x) => ({ ...x })));
+    setSel(store.parking.slots[0]?.code ?? null);
+    setEdit(true);
+  };
   const cancel = () => { setEdit(false); setDraft(null); setSel(null); };
-  const save = () => {
-    if (!draft) return;
-    setSlots(store.id, draft, { who: '최영호', msg: `주차장 배치도 수정 · ${draft.length}면`, tone: 'brand' });
+
+  const save = async () => {
+    if (!draft || saving) return;
+    setSaving(true);
+    const ok = await setSlots(store.id, draft, {
+      who: '최영호', msg: `주차장 배치도 수정 · ${draft.length}면`, tone: 'brand',
+    });
+    setSaving(false);
+    if (!ok) return;   // 실패하면 편집 모드를 유지한다
+
     pushToast({ title: '주차장 배치도를 저장했어요', desc: `주차면 ${draft.length}면`, tone: 'ok', icon: 'check' });
     cancel();
   };
@@ -612,6 +713,14 @@ function SetParking({ store }: { store: PartnerStore }) {
     if (taken(nr, nc, s.code)) return;
     patch(s.code, { row: nr, col: nc });
   };
+  const canMove = (dr: number, dc: number) => {
+    if (!s) return false;
+    const nr = s.row + dr;
+    const nc = s.col + dc;
+    if (nr < 0 || nr > 7 || nc < 0 || nc > 9) return false;
+    return !taken(nr, nc, s.code);
+  };
+
   const add = () => {
     if (!draft) return;
     for (let r = 0; r < 8; r++) {
@@ -620,20 +729,29 @@ function SetParking({ store }: { store: PartnerStore }) {
           const nums = draft.map((x) => parseInt(x.code.replace(/\D/g, ''), 10) || 0);
           const code = 'A' + (Math.max(0, ...nums) + 1);
           setDraft((d) => (d ? [...d, {
-            code, row: r, col: c, zone: 'A', autoStatus: 'available',
-            manualStatus: null, manualUntil: null, manualBy: null, type: null, nearGate: false, confidence: 0.98,
+            id: code,
+            code, row: r, col: c, zone: 'A',
+            // ★ 센서가 아직 안 붙었으므로 unknown 이다. available 로 두면
+            //   손님 앱이 없는 자리를 있다고 말한다 (규칙 3).
+            autoStatus: 'unknown' as const,
+            manualStatus: null, manualUntil: null, manualBy: null,
+            type: null, nearGate: false, confidence: 0,
           }] : d));
           setSel(code);
           return;
         }
       }
     }
+    pushToast({ title: '더 놓을 자리가 없어요', desc: '기존 주차면을 옮긴 뒤 추가해 주세요', tone: 'warn', icon: 'alert' });
   };
+
   const del = () => {
     if (!s) return;
     setDraft((d) => (d ? d.filter((x) => x.code !== s.code) : d));
     setSel(null);
   };
+
+  const pending = list.filter((x) => x.autoStatus === 'unknown').length;
 
   return (
     <div className="grid grid-cols-3 gap-5">
@@ -645,8 +763,10 @@ function SetParking({ store }: { store: PartnerStore }) {
           </div>
           {edit ? (
             <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={cancel}>취소</Button>
-              <Button variant="primary" size="sm" icon="check" onClick={save}>배치 저장</Button>
+              <Button variant="ghost" size="sm" onClick={cancel} disabled={saving}>취소</Button>
+              <Button variant="primary" size="sm" icon="check" onClick={save} disabled={saving}>
+                {saving ? '저장하는 중…' : '배치 저장'}
+              </Button>
             </div>
           ) : (
             <Button variant="outline" size="sm" icon="pencil" onClick={start}>배치도 편집</Button>
@@ -657,8 +777,8 @@ function SetParking({ store }: { store: PartnerStore }) {
           <div className="mb-4 rounded-xl bg-brand-50 border border-brand-200 px-4 py-3 flex items-start gap-2.5">
             <Icon n="question" s={16} cls="text-brand-600 shrink-0 mt-px" />
             <div className="text-[12px] font-medium text-brand-700 leading-relaxed">
-              주차면 하나가 곧 <b>센서 한 개</b>입니다. 배치도에서 지운 주차면의 센서는 감지 대상에서 제외되고,
-              추가한 주차면은 <b>센서 등록 대기</b> 상태가 됩니다.
+              주차면 하나가 곧 <b>센서 한 개</b>입니다. 주차면 번호는 센서 쪽 설정과 <b>똑같아야</b> 하고,
+              배치도에서 지운 주차면은 감지 대상에서 제외됩니다. 편집하는 동안에는 <b>실시간 갱신이 멈춥니다.</b>
             </div>
           </div>
         )}
@@ -679,12 +799,19 @@ function SetParking({ store }: { store: PartnerStore }) {
             </div>
 
             <div className="text-[11.5px] font-extrabold text-ink-500 mb-2">위치 이동</div>
-            <div className="grid grid-cols-3 gap-1.5 w-[148px] mx-auto mb-5">
-              <span /><Button variant="outline" size="sm" onClick={() => move(-1, 0)}>↑</Button><span />
-              <Button variant="outline" size="sm" onClick={() => move(0, -1)}>←</Button>
+            <div className="grid grid-cols-3 gap-1.5 w-[148px] mx-auto mb-2">
+              <span />
+              <Button variant="outline" size="sm" disabled={!canMove(-1, 0)} onClick={() => move(-1, 0)}>↑</Button>
+              <span />
+              <Button variant="outline" size="sm" disabled={!canMove(0, -1)} onClick={() => move(0, -1)}>←</Button>
               <div className="h-9 rounded-xl bg-ink-100 grid place-items-center text-[10.5px] font-extrabold text-ink-400">이동</div>
-              <Button variant="outline" size="sm" onClick={() => move(0, 1)}>→</Button>
-              <span /><Button variant="outline" size="sm" onClick={() => move(1, 0)}>↓</Button><span />
+              <Button variant="outline" size="sm" disabled={!canMove(0, 1)} onClick={() => move(0, 1)}>→</Button>
+              <span />
+              <Button variant="outline" size="sm" disabled={!canMove(1, 0)} onClick={() => move(1, 0)}>↓</Button>
+              <span />
+            </div>
+            <div className="text-[11px] font-medium text-ink-500 text-center mb-5 leading-relaxed">
+              다른 주차면이 있는 칸으로는 옮길 수 없어요.
             </div>
 
             <div className="text-[11.5px] font-extrabold text-ink-500 mb-2">주차면 종류</div>
@@ -733,11 +860,12 @@ function SetParking({ store }: { store: PartnerStore }) {
             </span>
             <div className="text-[14px] font-extrabold text-ink-900">센서 등록 현황</div>
           </div>
-          <StatRow label="정상 감지" value={list.length} sub="개" tone="text-ok-500" />
-          <StatRow label="등록 대기" value={0} sub="개" />
+          <StatRow label="정상 감지" value={list.length - pending} sub="개" tone="text-ok-500" />
+          <StatRow label="등록 대기" value={pending} sub="개" />
           <StatRow label="게이트웨이" value={1} sub="대" />
           <div className="mt-4 text-[11.5px] font-medium text-ink-500 leading-relaxed">
-            주차면 감지는 바닥에 설치한 지자기 센서가 담당합니다. 카메라 설정 항목은 없습니다.
+            주차면 감지는 바닥에 설치한 지자기 센서가 담당합니다. 새로 추가한 주차면은
+            센서가 같은 번호로 신호를 보내기 전까지 <b>등록 대기</b>로 표시됩니다.
           </div>
         </Card>
       </div>

@@ -124,6 +124,40 @@ function toSlotBody(patch: Partial<ParkingSlot>): Record<string, unknown> | null
   return { manualStatus, minutes };
 }
 
+/**
+ * [b6] 배치도 — PUT /api/admin/layout
+ * 여기도 action 이 없다. 상태 전이가 아니라 '구성이 이 모양이다' 를 통째로 보낸다.
+ *
+ * ★ 좌표가 뒤집힌다
+ *   API 는 x·y, 화면(types.ts)은 col·row 다. adapt.ts 가 읽을 때 뒤집었으므로
+ *   쓸 때도 같은 규칙으로 되돌린다. x = col, y = row.
+ *
+ * ★ 상태는 보내지 않는다
+ *   status·autoStatus·manualStatus 는 홀 운영·센서·주차 관리가 소유한다.
+ *   배치도가 보내는 건 구성값과 '사용 안 함' 토글뿐이다.
+ */
+function toLayoutTables(tables: StoreTable[]) {
+  return tables.map((t) => ({
+    code: t.code,
+    seats: t.seats,
+    x: t.col,
+    y: t.row,
+    w: t.w ?? 1,
+    disabled: t.status === 'disabled',
+  }));
+}
+
+function toLayoutSlots(slots: ParkingSlot[]) {
+  return slots.map((s) => ({
+    code: s.code,
+    x: s.col,
+    y: s.row,
+    zone: s.zone ?? '',
+    type: s.type ?? null,
+    nearGate: Boolean(s.nearGate),
+  }));
+}
+
 /** URL 만 보고 "지금 보고 있는 매장"을 알아낸다. 화면이 알려줄 필요가 없다 */
 function focusStoreId(pathname: string | null, reservations: Reservation[]): string | null {
   if (!pathname) return null;
@@ -162,6 +196,9 @@ interface SpotApi {
   /** [C15] 즉시 한 번 더 읽기 */
   refresh: () => void;
 
+  /** [b6] 배치도 편집 중에는 폴링을 멈춘다 */
+  setEditing: (on: boolean) => void;
+
   setSimOn: (v: boolean) => void;
   setRecent: React.Dispatch<React.SetStateAction<string[]>>;
   pushToast: (t: Omit<Toast, 'id'>) => void;
@@ -178,9 +215,9 @@ interface SpotApi {
   addReview: (storeId: string, resId: string, rating: number, text: string) => void;
 
   setSlot: (storeId: string, code: string, patch: Partial<ParkingSlot>, log?: LogInput) => void;
-  setSlots: (storeId: string, slots: ParkingSlot[], log?: LogInput) => void;
+  setSlots: (storeId: string, slots: ParkingSlot[], log?: LogInput) => Promise<boolean>;
   setTable: (storeId: string, tableId: string, patch: Partial<StoreTable>, log?: LogInput) => void;
-  setTables: (storeId: string, tables: StoreTable[], log?: LogInput) => void;
+  setTables: (storeId: string, tables: StoreTable[], log?: LogInput) => Promise<boolean>;
   setSensor: (storeId: string, sensor: SensorState) => void;
   /** [b4] 매장 기본 정보 수정 (관리자 · 매장 관리 > 매장 정보) */
   updateStoreInfo: (storeId: string, patch: StoreInfoPatch) => void;
@@ -238,6 +275,8 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
   const refreshRef = useRef<() => void>(() => {});
   /** 연결 끊김 토스트를 한 번만 띄우기 위한 표시 */
   const warnedRef = useRef(false);
+  /** [b6] 배치도 편집 중인가. 편집 중에는 폴링이 화면을 덮어쓰지 않는다 */
+  const editingRef = useRef(false);
 
   /* 마운트 직후 한 번 — 시각 관련 값을 실제 시간으로 채운다 */
   useEffect(() => {
@@ -302,8 +341,8 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
     async function tick() {
       if (!alive) return;
 
-      // 다른 탭을 보고 있으면 서버를 부르지 않는다. Hobby 플랜 호출 수를 아낀다
-      if (typeof document !== 'undefined' && document.hidden) return schedule();
+      // [b6] 배치도 편집 중에는 읽지 않는다. 방금 옮긴 위치를 서버 값이 되돌린다
+      if (editingRef.current) return schedule();
 
       try {
         const list = await getJSON<ApiStoreListItem[]>('/api/stores');
@@ -419,22 +458,31 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
 
   /** 쓰기 공통 — 보내고, 끝나면 즉시 다시 읽어 서버 값으로 맞춘다 */
   const send = useCallback(
-    async (url: string, body: Record<string, unknown>, failMsg: string) => {
+    async (
+      url: string,
+      body: Record<string, unknown>,
+      failMsg: string,
+      method: 'PATCH' | 'PUT' = 'PATCH',
+    ): Promise<{ ok: boolean; data: Record<string, unknown> | null }> => {
       try {
         const r = await fetch(url, {
-          method: 'PATCH',
+          method,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
+        const j = (await r.json().catch(() => null)) as Record<string, unknown> | null;
+
         if (!r.ok) {
           // 서버가 준 안내문이 우리 문구보다 정확하다.
           // 409(다른 직원이 먼저 누름)면 "화면을 새로고침해 주세요" 가 그대로 뜬다
-          const j = await r.json().catch(() => null);
-          pushToast({ title: failMsg, desc: j?.message ?? `오류 ${r.status}`, tone: 'warn' });
+          pushToast({ title: failMsg, desc: (j?.message as string) ?? `오류 ${r.status}`, tone: 'warn' });
+          return { ok: false, data: j };
         }
+        return { ok: true, data: j };
       } catch (e) {
-        console.error('[PATCH]', e);
+        console.error(`[${method}]`, e);
         pushToast({ title: failMsg, desc: '연결을 확인해 주세요', tone: 'warn' });
+        return { ok: false, data: null };
       } finally {
         refreshRef.current();   // 성공이든 실패든 서버가 진실이다
       }
@@ -446,6 +494,7 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
     mounted, stores, lots, reservations, adminRes, reviews, favorites, recent, simOn, toasts, log, profile,
     live, lastSync,
     refresh: () => refreshRef.current(),
+    setEditing: (on: boolean) => { editingRef.current = on; },
     setSimOn, setRecent, pushToast, addLog, setAdminRes, updateProfile,
 
     getStore: (id) => stores.find((s) => s.id === id),
@@ -515,16 +564,42 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
       void send(`/api/admin/tables/${tableId}`, { action }, '테이블 상태를 저장하지 못했어요');
     },
 
-    // 배치도 통째 저장은 아직 API 가 없다 (B 담당 feat/b-layout-save). 지금은 메모리에만 반영한다
-    setSlots: (storeId, slots, logInput) => {
+   /* [b6] 배치도 통째 저장 — PUT /api/admin/layout
+       다른 쓰기와 같다. 화면을 먼저 바꾸고 보낸 뒤 다시 읽는다.
+       화면이 저장 성공 여부를 알아야 편집 모드를 닫을지 정할 수 있어서
+       여기만 Promise 를 돌려준다. */
+    setSlots: async (storeId, slots, logInput) => {
       setStores((prev) =>
         prev.map((s) => (s.id !== storeId ? s : { ...s, parking: { ...s.parking, slots, updated: Date.now() } }))
       );
       if (logInput) addLog(logInput.who, logInput.msg, logInput.tone);
+
+      const r = await send(
+        '/api/admin/layout',
+        { storeId, slots: toLayoutSlots(slots) },
+        '주차장 배치도를 저장하지 못했어요',
+        'PUT',
+      );
+      return r.ok;
     },
-    setTables: (storeId, tables, logInput) => {
+
+    setTables: async (storeId, tables, logInput) => {
       setStores((prev) => prev.map((s) => (s.id !== storeId ? s : { ...s, tables, tablesUpdated: Date.now() })));
       if (logInput) addLog(logInput.who, logInput.msg, logInput.tone);
+
+      const r = await send(
+        '/api/admin/layout',
+        { storeId, tables: toLayoutTables(tables) },
+        '테이블 배치도를 저장하지 못했어요',
+        'PUT',
+      );
+
+      // 서버가 건너뛴 항목이 있으면 알려 준다 (손님이 앉은 자리의 '사용 안 함' 토글 등)
+      const skipped = r.data?.skipped as string[] | undefined;
+      if (r.ok && skipped?.length) {
+        pushToast({ title: '일부는 반영하지 않았어요', desc: skipped[0], tone: 'warn' });
+      }
+      return r.ok;
     },
     setSensor: (storeId, sensor) =>
       setStores((prev) =>
