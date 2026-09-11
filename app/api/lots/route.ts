@@ -9,48 +9,60 @@ export const dynamic = 'force-dynamic'
 /**
  * 대전시 공영주차장 목록
  * ─────────────────────────────────────────────────────────────
- * 공공데이터포털의 두 데이터셋을 합쳐서 쓴다.
+ * [A6] 카카오맵 전환에 맞춰 세 군데를 고쳤다.
  *
- *   data/lots.xml     「대전광역시_주차장정보 제공 API 서비스2」(15059437)
- *                     위치 · 총 면수 · 공영/민영 구분. 대흥동·은행동 포함
- *   data/realtime.xml 「대전광역시_실시간 주차장 정보」(15083717)
- *                     전화번호 · 정확한 요금표. 좌표로 짝을 맞춘다
+ *   1. 시연 지역을 대흥동·은행동 → 송촌동·법동(대덕구)으로 옮겼다.
+ *      이유는 하나다. 실시간 잔여 대수가 실제로 들어오는 주차장이 거기 있다.
+ *      (C16 때 대흥동을 조사하고 "원도심은 실시간 커버리지가 없다"고 결론 냈는데,
+ *       그 결론 자체는 맞았다. 틀린 건 지역 선택이었다.)
  *
- * ★ 왜 실시간 잔여 대수를 안 쓰는가 (전수 조사 결과)
- *   실시간 API 는 실제로 갱신된다 — 갤러리아 타임월드가 30분 만에 547 → 550.
- *   그러나 대흥동·은행동 16곳 중 resQty 에 값이 있는 곳은 대흥동제3노외 한 곳뿐이고,
- *   그 값(33)마저 정적 API 와 동일해 갱신되지 않는다. 16곳 전부 totalQty 가 비어 있다.
- *   실시간 연동은 서구 대형 상업시설에만 되어 있고 원도심은 대상이 아니다.
- *   그래서 available 은 null 로 내려보내고 화면에 "확인 불가"로 표시한다.
- *   0 으로 채우면 "만차"로 보이는데 사실은 "모른다"이다.
+ *   2. lat/lng 를 목업 지도의 0~100% 가 아니라 실제 위경도로 내려보낸다.
+ *      카카오맵은 위경도를 받기 때문이다. realLat/realLng 는 같은 값으로 남겨 둔다
+ *      (길안내 코드가 그 이름을 쓰고 있어서 지우지 않았다).
  *
- * ★ 왜 파일을 읽는가
- *   공공데이터 게이트웨이가 서버(Node) 요청을 HTTP_ERROR(04) 로 거부한다.
- *   브라우저·curl 은 되는데 fetch·Invoke-WebRequest 는 안 된다.
- *   데이터가 정적이라 매번 호출할 이유가 없어 응답을 저장소에 넣고 읽는다.
- *   갱신이 필요하면 두 파일만 교체하면 된다.
+ *   3. 실시간 제공 여부를 판별한다. 판별 기준은 resQty 가 아니라 totalQty 다.
+ *      전수 조사 결과 resQty 는 756곳 전부에 값이 있지만(대부분 0),
+ *      totalQty 에 값이 있는 곳은 20곳뿐이고 그 20곳이 대전시 주차안내시스템
+ *      지도에서 초록색으로 찍히는 주차장과 정확히 일치한다.
+ *
+ *      · totalQty 있음 → 실시간 연동 주차장. available 에 숫자를 넣는다
+ *      · totalQty 없음 → 기본정보 제공 주차장. available 은 null 이다
+ *
+ *      화면은 available === null 을 이미 "확인 불가"로 그린다(levelOf → LEVEL.none).
+ *      그래서 타입(lib/types.ts)에 필드를 새로 추가하지 않았다. 계약서는 그대로다.
+ *
+ * ★ 남아 있는 한계 — 발표 때 질문받으면 이렇게 답할 것
+ *   data/*.xml 은 받아서 저장해 둔 스냅샷이다. 공공데이터 게이트웨이가 서버(Node)
+ *   요청을 HTTP_ERROR(04) 로 거부해서 런타임에 부를 수가 없다.
+ *   따라서 공영주차장 숫자는 "제공기관이 마지막으로 집계한 값"이고 실행 중에 변하지 않는다.
+ *   시연에서 실제로 초 단위로 움직이는 건 스프린트 식당(s1)의 센서 주차면이다.
+ *   둘의 성격이 다르다는 걸 UI에서 구분해 보여 주는 것이 이번 작업의 핵심이다.
  */
-
-/** 실시간 잔여 대수를 쓸지. 원도심 커버리지가 생기면 true 로 바꾼다 */
-const REALTIME = false
 
 const TTL_MS = 60_000
 
-/** 시연 대상 지역 (대흥동 · 은행동 · 소제동). 목업 지도 0~100% 좌표계의 기준이기도 하다 */
-const BBOX = { minLat: 36.3150, maxLat: 36.3450, minLng: 127.4150, maxLng: 127.4450 }
+/**
+ * 시연 대상 지역 — 대덕구 송촌동 · 법동 · 중리동
+ * 이 범위 안에 공영주차장 30곳이 있고 그중 6곳이 실시간 연동이다.
+ *   실시간  송촌소리 · 송촌공영 · 법동시장 제2 · 중리시장 제1 · 중리시장 제2 · 동춘당생애길 제1
+ */
+const BBOX = { minLat: 36.3580, maxLat: 36.3720, minLng: 127.4250, maxLng: 127.4460 }
+
+/**
+ * 스프린트 식당(s1) 위치.
+ * 실시간 주차장 세 곳(법동시장 제2 · 송촌소리 · 송촌공영)을 꼭짓점으로 하는
+ * 삼각형의 내심이다. 세 곳 모두 도보권에 들어오는 지점이라
+ * "이 식당에 가려면 어디에 대면 되나"를 한 화면에서 보여 주기 좋다.
+ *   내심 36.365764, 127.436058 / 내접원 반지름 약 106m
+ * near[] 를 계산할 기준점으로만 쓴다. 지도 마커 좌표는 lib/mock.ts 에 있다.
+ */
+const DEMO_STORE = { id: 's1', lat: 36.36572, lng: 127.43608 }
+
+/** 공영주차장 상세의 "근처 추천 식당"에 넣을 최대 도보 거리 */
+const NEAR_MAX_M = 900
 
 /** 두 데이터셋을 좌표로 맞출 때 허용 오차 (약 11m) */
 const MATCH_EPS = 0.0001
-
-const clamp = (v: number) => Math.max(4, Math.min(96, v))
-
-/** 실제 위경도 → 목업 지도의 0~100%. 위도는 클수록 북쪽이라 y 를 뒤집는다 */
-function toPercent(lat: number, lng: number) {
-  return {
-    y: clamp(((BBOX.maxLat - lat) / (BBOX.maxLat - BBOX.minLat)) * 100),
-    x: clamp(((lng - BBOX.minLng) / (BBOX.maxLng - BBOX.minLng)) * 100),
-  }
-}
 
 /** 이 API 들은 값이 없을 때 빈 칸이 아니라 'NONE' 을 보낸다 */
 const str = (v: unknown) => {
@@ -63,6 +75,13 @@ const num = (v: unknown) => {
 }
 
 const guOf = (addr: string) => addr.split(/\s+/).find((w) => w.endsWith('구')) ?? ''
+
+/** 위경도 두 점 사이 직선 거리(m). 이 정도 범위에서는 평면 근사로 충분하다 */
+function distM(aLat: number, aLng: number, bLat: number, bLng: number) {
+  const dy = (aLat - bLat) * 111_320
+  const dx = (aLng - bLng) * 111_320 * Math.cos((((aLat + bLat) / 2) * Math.PI) / 180)
+  return Math.round(Math.hypot(dx, dy))
+}
 
 function hoursText(open: string, close: string) {
   if (!open || !close) return ''
@@ -84,14 +103,15 @@ interface Lot {
   addr: string
   type: string
   total: number
+  /** null = 기본정보 제공 주차장(실시간 연동 없음). 0 과 완전히 다른 뜻이다 */
   available: number | null
   fee: string
   dayMax: string
   hours: string
   tel: string
-  lat: number        // 목업 지도 0~100%
-  lng: number
-  realLat: number    // 실제 위경도 — 길안내·카카오맵용
+  lat: number        // ★ 실제 위도 (카카오맵)
+  lng: number        // ★ 실제 경도
+  realLat: number    // 길안내 코드 호환용 — lat 과 같은 값
   realLng: number
   updated: number
   near: [string, number][]
@@ -103,6 +123,8 @@ interface RtInfo {
   lng: number
   tel: string
   fee: string
+  /** null = 태그가 비어 있음 → 이 주차장은 실시간 연동이 아니다 */
+  totalQty: number | null
   resQty: number | null
 }
 
@@ -114,7 +136,6 @@ const dataPath = (f: string) => path.join(process.cwd(), 'data', f)
  * 요금 문구를 만든다.
  * 실시간 데이터셋에는 기본시간·기본요금·추가시간·추가요금이 숫자로 들어 있어서
  * "10분 300원 · 이후 15분당 300원" 같은 실제 안내를 만들 수 있다.
- * 정적 데이터셋에는 무료시간뿐이라 "최초 30분 무료" 가 한계였다.
  */
 function feeFromRealtime(item: Record<string, unknown>): string {
   const type = str(item.type)
@@ -174,13 +195,17 @@ async function loadRealtime(): Promise<RtInfo[]> {
     const lng = num(node.lon)
     if (!lat || !lng) continue
 
-    const q = str(node.resQty)
+    // ★ 빈 태그(<totalQty />)는 파서가 '' 로 준다. 그게 "실시간 연동 아님" 신호다
+    const tq = str(node.totalQty)
+    const rq = str(node.resQty)
+
     out.push({
       lat,
       lng,
       tel: str(node.tel),
       fee: feeFromRealtime(node),
-      resQty: q === '' ? null : Number(q),
+      totalQty: tq === '' ? null : Number(tq),
+      resQty: rq === '' ? null : Number(rq),
     })
   }
 
@@ -217,19 +242,22 @@ async function loadLots(): Promise<Lot[]> {
   return rows
     .filter((r) => str(r.DIVIDE_NUM) === '6')      // 6:공영 / 7:민간
     .map((r): Lot => {
-      const realLat = num(r.LAT)
-      const realLng = num(r.LON)
-      const { x, y } = toPercent(realLat, realLng)
-      const hit = matchRealtime(rt, realLat, realLng)
+      const lat = num(r.LAT)
+      const lng = num(r.LON)
+      const hit = matchRealtime(rt, lat, lng)
+      const live = hit?.totalQty != null           // ★ 실시간 연동 주차장인가
 
-      // 총 면수 — 두 필드가 어긋나는 데이터가 있어 큰 쪽을 믿는다
-      const total = Math.max(num(r.TOTAL_PARKING_LOT), num(r.AVAILABLE_TOTAL_LOT))
+      // 총 면수 — 실시간 쪽이 더 최신이지만 0 이면 못 믿으니 정적 값으로 돌아간다
+      const staticTotal = Math.max(num(r.TOTAL_PARKING_LOT), num(r.AVAILABLE_TOTAL_LOT))
+      const total = live && (hit!.totalQty as number) > 0 ? (hit!.totalQty as number) : staticTotal
 
-      // 잔여 대수 — 실시간 커버리지가 없어 기본은 null
+      // 잔여 대수 — 실시간 연동이 아니면 null. 0 으로 채우면 "만차"로 읽힌다
       let available: number | null = null
-      if (REALTIME && hit?.resQty != null && total > 0) {
-        available = Math.max(0, Math.min(total, hit.resQty))
+      if (live && total > 0) {
+        available = Math.max(0, Math.min(total, hit!.resQty ?? 0))
       }
+
+      const dist = distM(lat, lng, DEMO_STORE.lat, DEMO_STORE.lng)
 
       return {
         id: str(r.PARKING_ID),
@@ -243,21 +271,30 @@ async function loadLots(): Promise<Lot[]> {
         fee: hit?.fee || feeFromStatic(num(r.FREECHARGE_BASETIME), str(r.ADDITIONAL)),
         dayMax: '',
         hours: hoursText(str(r.WEEKDAY_OPEN_TIME), str(r.WEEKDAY_CLOSE_TIME)),
-        tel: hit?.tel && !/^010-1234-5678$/.test(hit.tel) ? hit.tel : '',                        // 정적 데이터셋에는 전화번호가 없다
-        lat: y,
-        lng: x,
-        realLat,
-        realLng,
+        // 010-1234-5678 은 이 데이터셋의 자리채움 값이다. 손님에게 보여 주면 안 된다
+        tel: hit?.tel && hit.tel !== '010-1234-5678' ? hit.tel : '',
+        lat,
+        lng,
+        realLat: lat,
+        realLng: lng,
         updated: now,
-        near: [],
+        near: dist <= NEAR_MAX_M ? [[DEMO_STORE.id, dist]] : [],
       }
     })
     .filter((l) =>
       l.id && l.name && l.total > 0 &&
-      l.realLat >= BBOX.minLat && l.realLat <= BBOX.maxLat &&
-      l.realLng >= BBOX.minLng && l.realLng <= BBOX.maxLng,
+      l.lat >= BBOX.minLat && l.lat <= BBOX.maxLat &&
+      l.lng >= BBOX.minLng && l.lng <= BBOX.maxLng,
     )
-    .slice(0, 12)
+    // 실시간 연동 주차장을 앞에 둔다. 뒤쪽이 잘려도 초록 마커는 살아남는다
+    .sort((a, b) => {
+      const la = a.available == null ? 1 : 0
+      const lb = b.available == null ? 1 : 0
+      if (la !== lb) return la - lb
+      return distM(a.lat, a.lng, DEMO_STORE.lat, DEMO_STORE.lng)
+           - distM(b.lat, b.lng, DEMO_STORE.lat, DEMO_STORE.lng)
+    })
+    .slice(0, 40)
 }
 
 export async function GET() {

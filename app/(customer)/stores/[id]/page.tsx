@@ -277,7 +277,7 @@ export default function StoreDetailPage({ params }: { params: Promise<{ id: stri
           </div>
         </BottomSheet>
 
-        <NavSheet open={nav} onClose={() => setNav(false)} target={`${store.name} 주차장`} />
+        <NavSheet open={nav} onClose={() => setNav(false)} target={`${store.name} 주차장`} lat={store.lat} lng={store.lng} />
       </div>
     </>
   );

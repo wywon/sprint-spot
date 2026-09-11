@@ -149,7 +149,7 @@ export default function LotDetailPage({ params }: { params: Promise<{ id: string
         </Button>
       </StickyCta>
 
-      <NavSheet open={nav} onClose={() => setNav(false)} target={lot.name} />
+      <NavSheet open={nav} onClose={() => setNav(false)} target={lot.name} lat={lot.lat} lng={lot.lng} />
     </div>
   );
 }
