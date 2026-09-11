@@ -73,13 +73,17 @@ export const LEVEL: Record<string, LevelToken> = {
 };
 
 /**
- * 외부 지도앱 — 길안내는 항상 이 세 가지로 분기한다.
+ * 외부 지도앱 — 길안내는 여기로 넘긴다.
  * 우리가 내비게이션을 직접 만들지 않는다는 설계 결정이다.
+ *
+ * [A6] 네이버 지도·TMAP 를 뺐다.
+ *   버튼만 있고 실제로 열리지 않는 항목이 셋 중 둘이면, 손님은 그 화면 전체를
+ *   "눌러도 안 되는 화면"으로 학습한다. 실제로 연결되는 하나만 남기는 쪽이 낫다.
+ *   지도 SDK 를 카카오로 붙였으므로 좌표계·장소명이 그대로 이어진다는 이점도 있다.
+ *   나중에 늘릴 때는 여기에 항목을 넣고 overlays.tsx 의 openNav 에 분기를 추가한다.
  */
 export const NAV_APPS = [
-  { key: 'naver', name: '네이버 지도', color: 'bg-[#03C75A]', initial: 'N', dark: false },
-  { key: 'kakao', name: '카카오맵',    color: 'bg-[#FEE500]', initial: 'K', dark: true },
-  { key: 'tmap',  name: 'TMAP',       color: 'bg-[#0F62FE]', initial: 'T', dark: false },
+  { key: 'kakao', name: '카카오맵', color: 'bg-[#FEE500]', initial: 'K', dark: true },
 ] as const;
 
 /** 정리 중 → 빈 자리 자동 전환까지 걸리는 시간. 관리자가 버튼을 누르지 않아도 풀린다 */

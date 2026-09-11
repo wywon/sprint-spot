@@ -277,7 +277,7 @@ export default function ReservationDetailPage({ params }: { params: Promise<{ id
         )}
       </StickyCta>
 
-      <NavSheet open={nav} onClose={() => setNav(false)} target={pickedOpt?.name ?? ''} />
+      <NavSheet open={nav} onClose={() => setNav(false)} target={pickedOpt?.name ?? ''} lat={pickedOpt?.lat} lng={pickedOpt?.lng} />
 
       <ConfirmModal
         open={askCancel}

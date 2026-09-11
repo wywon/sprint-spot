@@ -237,6 +237,21 @@ export interface ParkingOption {
   available: number | null;
   fee: string;
   badge: string;
+  /** [A6] 길안내에 넘길 실제 위경도. 좌표를 모르면 undefined */
+  lat?: number;
+  lng?: number;
+}
+
+/** 한반도 범위 안의 좌표인가. 퍼센트(0~100)가 남아 있는 데이터를 걸러 낸다 */
+const realCoord = (lat?: number, lng?: number) =>
+  typeof lat === 'number' && typeof lng === 'number' &&
+  lat > 33 && lat < 39 && lng > 124 && lng < 132;
+
+/** 두 점 사이 직선 거리(m) */
+function metersBetween(aLat: number, aLng: number, bLat: number, bLng: number) {
+  const dy = (aLat - bLat) * 111_320;
+  const dx = (aLng - bLng) * 111_320 * Math.cos((((aLat + bLat) / 2) * Math.PI) / 180);
+  return Math.round(Math.hypot(dx, dy));
 }
 
 export function parkingOptions(store: PartnerStore | null, lots: PublicLot[]): ParkingOption[] {
@@ -251,22 +266,36 @@ export function parkingOptions(store: PartnerStore | null, lots: PublicLot[]): P
         available: parkStats(store).available,
         fee: store.parking.fee,
         badge: '매장 주차장',
+        lat: realCoord(store.lat, store.lng) ? store.lat : undefined,
+        lng: realCoord(store.lat, store.lng) ? store.lng : undefined,
       }]
     : [];
 
-  // 거리는 목업이므로 id 로부터 결정적으로 만든다 (렌더할 때마다 값이 바뀌면 안 되므로 난수 금지)
+  /**
+   * [A6] 거리를 실제 좌표로 계산한다.
+   * 예전에는 id 순서로 만든 가짜 값이었다. 지도에 실제 위치가 찍히기 시작한 이상
+   * "가까운 순" 정렬과 지도 위 거리가 어긋나면 손님이 먼저 알아챈다.
+   * 좌표가 아직 퍼센트인 데이터가 섞여 있을 수 있으므로, 그때는 예전 방식으로 돌아간다.
+   */
+  const anchor = realCoord(store?.lat, store?.lng) ? store! : null;
+
   const near: ParkingOption[] = lots.map((l, i) => {
-    const dist = 180 + ((i * 137) % 440);
+    const dist = anchor && realCoord(l.lat, l.lng)
+      ? metersBetween(anchor.lat, anchor.lng, l.lat, l.lng)
+      : 180 + ((i * 137) % 440);
     return {
       kind: 'lot',
       id: l.id,
       name: l.name,
       dist,
+      // 도보 속도 67m/분 = 시속 4km
       walk: Math.max(1, Math.round(dist / 67)),
       total: l.total,
       available: l.available,
       fee: l.fee,
       badge: '공영주차장',
+      lat: realCoord(l.lat, l.lng) ? l.lat : undefined,
+      lng: realCoord(l.lat, l.lng) ? l.lng : undefined,
     };
   });
 

@@ -1,11 +1,14 @@
 'use client';
 
-import React, { Suspense, useState } from 'react';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Icon } from '@/components/ui/Icon';
 import { Chip } from '@/components/ui/primitives';
-import { MapCanvas, LotMarker, PartnerMarker, PlainMarker, MeMarker } from '@/components/customer/MapCanvas';
+import {
+  MapCanvas, LotMarker, PartnerMarker, PlainMarker, MeMarker,
+  DEMO_CENTER, distM, type FitPoint,
+} from '@/components/customer/MapCanvas';
 import { StoreCard, LotCard } from '@/components/customer/Cards';
 import { cx } from '@/lib/format';
 import { PLAIN_STORES } from '@/lib/mock';
@@ -34,6 +37,17 @@ import { useApp } from '@/lib/store';
  *   ※ npm run dev 에서는 이 에러가 안 난다. 빌드할 때만 난다.
  *     useSearchParams() 를 새로 쓰는 화면이 생기면 똑같이 감싸 줄 것.
  */
+/**
+ * 첫 화면에 담을 반경(m). 스프린트 식당 기준이다.
+ * 520m 면 실시간 공영주차장 세 곳이 전부 들어온다.
+ *   송촌소리 133m · 법동시장 제2 305m · 송촌공영 444m
+ * 더 좁게 보고 싶으면 이 숫자를 줄인다.
+ */
+const FIT_RADIUS_M = 520;
+
+/** 안내 카드를 닫았는지 기억하는 키 */
+const HINT_KEY = 'spot.hint.explore';
+
 export default function ExplorePage() {
   return (
     <Suspense fallback={<div className="absolute inset-0 map-grid" />}>
@@ -53,6 +67,28 @@ function ExploreView() {
 
   const [sel, setSel] = useState<string | null>(focusId);
 
+  /**
+   * 첫 화면 안내 카드.
+   * ─────────────────────────────────────────────────────────
+   * 한 번 읽으면 끝나는 문구다. 매번 다시 띄우면 지도를 가리는 방해물이 된다.
+   * 닫은 사실은 localStorage 에 남겨서 다음에 켤 때도 안 뜨게 한다.
+   *
+   * 읽기를 useEffect 안에서 하는 이유 — 렌더 도중에 localStorage 를 읽으면
+   * 서버가 만든 HTML(항상 '안 닫힘')과 브라우저 결과가 달라져 hydration 오류가 난다.
+   * 그래서 일단 띄운 상태로 그리고, 마운트 직후에 닫힌 적이 있으면 치운다.
+   */
+  const [hintOff, setHintOff] = useState(false);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(HINT_KEY) === '1') setHintOff(true);
+    } catch { /* 시크릿 모드 등에서 막히면 그냥 띄운다 */ }
+  }, []);
+
+  const closeHint = () => {
+    setHintOff(true);
+    try { localStorage.setItem(HINT_KEY, '1'); } catch { /* 무시 */ }
+  };
+
   const showLots = filter === 'all' || filter === 'lot';
   const showFood = filter === 'all' || filter === 'food';
 
@@ -66,10 +102,36 @@ function ExploreView() {
   const selStore = stores.find((s) => s.id === sel);
   const selLot = lots.find((l) => l.id === sel);
 
+  /**
+   * [A6] 첫 화면에 무엇이 보여야 하는가
+   * ─────────────────────────────────────────────────────────
+   * 실시간 주차장(초록)만 보이면 "우리가 실시간이라 자랑하는 것"만 남고,
+   * 기본정보 주차장(회색)까지 같이 보여야 "이 동네 주차장은 이만큼 있고
+   * 그중 실시간으로 아는 건 이만큼"이라는 사실이 한눈에 읽힌다.
+   * 그래서 마커 전체가 들어오도록 지도를 맞춘다. 고정 줌을 쓰지 않는 이유다.
+   *
+   * fitKey 를 필터 값으로 두면 필터를 바꿀 때만 다시 맞춘다.
+   * 3초·30초 폴링이 돌 때마다 지도가 튀면 손님이 끌어 놓은 화면이 매번 초기화된다.
+   */
+  const fitPoints = useMemo<FitPoint[]>(() => {
+    const all: FitPoint[] = [];
+    if (showLots) lots.forEach((l) => all.push({ lat: l.lat, lng: l.lng }));
+    if (showFood) stores.forEach((s) => all.push({ lat: s.lat, lng: s.lng }));
+
+    // 마커 전체를 다 넣으면 중리동·법1동까지 끌려 들어와 첫 화면이 구 단위가 된다.
+    // 손님이 첫 화면에서 판단하는 건 "걸어갈 만한 거리에 뭐가 있나"이므로
+    // 시연 매장 반경 안쪽만 기준으로 잡고, 나머지는 밀거나 줄여서 보게 둔다.
+    const near = all.filter((p) => distM(p, DEMO_CENTER) <= FIT_RADIUS_M);
+    return near.length >= 2 ? near : all;
+  }, [showLots, showFood, lots, stores]);
+
+  /** 실시간 잔여 대수를 아는 공영주차장 수. 칩에 숫자로 붙인다 */
+  const liveLots = lots.filter((l) => l.available != null).length;
+
   return (
     <div className="absolute inset-0">
-      <MapCanvas>
-        <MeMarker lat={50} lng={50} />
+      <MapCanvas fit={fitPoints} fitKey={filter}>
+        <MeMarker />
         {showLots && lots.map((l) => (
           <LotMarker key={l.id} lot={l} on={sel === l.id} onClick={() => setSel(l.id)} />
         ))}
@@ -122,14 +184,33 @@ function ExploreView() {
           <div className="animate-popIn">
             <LotCard lot={selLot} />
           </div>
-        ) : (
-          <div className="bg-white/95 backdrop-blur-xl rounded-2xl border border-ink-200 shadow-pop px-4 py-3 flex items-center gap-2.5">
+        ) : hintOff ? null : (
+          <div className="bg-white/95 backdrop-blur-xl rounded-2xl border border-ink-200 shadow-pop pl-4 pr-2 py-3 flex items-center gap-2.5 animate-popIn">
             <Icon n="compass" s={18} cls="text-brand-600 shrink-0" />
             <div className="grow text-[12.5px] font-bold text-ink-700 leading-snug">
-              지도에서 <b className="text-ink-900">숫자가 붙은 표시</b>를 누르면
-              <br />
-              좌석과 주차 상황을 함께 볼 수 있어요
+              {liveLots > 0 ? (
+                <>
+                  이 주변 주차장 {lots.length}곳 중{' '}
+                  <b className="text-ink-900">{liveLots}곳</b>은 남은 자리까지 알 수 있어요
+                  <br />
+                  <span className="text-ink-500">지도에서 표시를 눌러 확인해 보세요</span>
+                </>
+              ) : (
+                <>
+                  지도에서 <b className="text-ink-900">가게 표시</b>를 누르면
+                  <br />
+                  좌석과 주차 상황을 함께 볼 수 있어요
+                </>
+              )}
             </div>
+            {/* 손가락으로 눌러야 하므로 44px 확보한다. 아이콘만 작게 보인다 */}
+            <button
+              onClick={closeHint}
+              aria-label="안내 닫기"
+              className="shrink-0 w-11 h-11 -my-2 grid place-items-center text-ink-400 active:scale-90 transition-transform"
+            >
+              <Icon n="x" s={16} />
+            </button>
           </div>
         )}
       </div>

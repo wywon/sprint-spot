@@ -74,7 +74,7 @@ export const PARTNER_STORES: PartnerStore[] = [
     id: 's1', partner: true, name: '대흥동 손칼국수', cat: '한식 · 칼국수', addr: '대전 중구 대흥동 218-4',
     tel: '042-256-1234', open: '10:30 - 20:00', price: '8,000~14,000원', rating: 4.5, reviews: 1240,
     tags: ['혼밥 OK', '포장', '주차 가능'], hero: 'from-orange-300 via-amber-400 to-orange-500',
-    lat: 38, lng: 30, sensor: 'online', tablesUpdated: 0,
+    lat: 36.36572, lng: 127.43608, sensor: 'online', tablesUpdated: 0,
     tables: mkTables([
       { id: 't1', seats: 2, status: 'occupied', row: 0, col: 0, guest: 2, since: '12:04' },
       { id: 't2', seats: 2, status: 'available', row: 0, col: 1 },
@@ -118,7 +118,7 @@ export const PARTNER_STORES: PartnerStore[] = [
     id: 's2', partner: true, name: '은행동 두부두루치기', cat: '한식 · 향토음식', addr: '대전 중구 은행동 145',
     tel: '042-253-8080', open: '11:00 - 22:00', price: '12,000~18,000원', rating: 4.7, reviews: 3820,
     tags: ['대전 향토음식', '단체석', '주차 가능'], hero: 'from-amber-300 via-orange-400 to-red-500',
-    lat: 56, lng: 62, sensor: 'online', tablesUpdated: 0,
+    lat: 36.36540, lng: 127.43780, sensor: 'online', tablesUpdated: 0,
     tables: mkTables([
       { id: 't1', seats: 2, status: 'available', row: 0, col: 0 },
       { id: 't2', seats: 4, status: 'occupied', row: 0, col: 1, guest: 4, since: '12:31' },
@@ -143,7 +143,7 @@ export const PARTNER_STORES: PartnerStore[] = [
     id: 's3', partner: true, name: '소제동 브런치하우스', cat: '브런치 · 카페', addr: '대전 동구 소제동 89',
     tel: '042-631-2200', open: '09:30 - 18:00', price: '12,000~19,000원', rating: 4.5, reviews: 1580,
     tags: ['카페거리', '예약 권장', '주차 가능'], hero: 'from-lime-200 via-emerald-300 to-teal-400',
-    lat: 22, lng: 70, sensor: 'offline', tablesUpdated: 0,
+    lat: 36.36640, lng: 127.43700, sensor: 'offline', tablesUpdated: 0,
     tables: mkTables([
       { id: 't1', seats: 2, status: 'available', row: 0, col: 0 },
       { id: 't2', seats: 2, status: 'available', row: 0, col: 1 },
@@ -165,44 +165,46 @@ export const PARTNER_STORES: PartnerStore[] = [
 /* ── 미입점 식당 — 지도에 상호명만 뜬다 ────────────────── */
 
 export const PLAIN_STORES: PlainStore[] = [
-  { id: 'p1', partner: false, name: '중앙시장 손만두',   cat: '한식 · 만두', lat: 44, lng: 82 },
-  { id: 'p2', partner: false, name: '목척교 순대국밥',   cat: '한식 · 국밥', lat: 66, lng: 44 },
-  { id: 'p3', partner: false, name: '중교로 왕갈비',     cat: '한식 · 갈비', lat: 30, lng: 52 },
-  { id: 'p4', partner: false, name: '은행동 스시',       cat: '일식 · 스시', lat: 70, lng: 74 },
-  { id: 'p5', partner: false, name: '선화동 삼겹살',     cat: '한식 · 고기', lat: 78, lng: 26 },
-  { id: 'p6', partner: false, name: '원도심 정미소커피', cat: '카페',        lat: 14, lng: 44 },
+  { id: 'p1', partner: false, name: '중앙시장 손만두',   cat: '한식 · 만두', lat: 36.36530, lng: 127.43660 },
+  { id: 'p2', partner: false, name: '목척교 순대국밥',   cat: '한식 · 국밥', lat: 36.36600, lng: 127.43530 },
+  { id: 'p3', partner: false, name: '중교로 왕갈비',     cat: '한식 · 갈비', lat: 36.36510, lng: 127.43740 },
+  { id: 'p4', partner: false, name: '은행동 스시',       cat: '일식 · 스시', lat: 36.36620, lng: 127.43840 },
+  { id: 'p5', partner: false, name: '선화동 삼겹살',     cat: '한식 · 고기', lat: 36.36480, lng: 127.43700 },
+  { id: 'p6', partner: false, name: '원도심 정미소커피', cat: '카페',        lat: 36.36660, lng: 127.43580 },
 ];
 
 /* ── 공영주차장 ─────────────────────────────────────────── */
 
 export const PUBLIC_LOTS: PublicLot[] = [
   {
-    id: 'L1', name: '으능정이 공영주차장', gu: '대전 중구', addr: '대전 중구 중앙로 165 일원',
-    type: '노외', total: 132, available: 12, fee: '10분 300원', dayMax: '일 최대 12,000원',
-    hours: '24시간', tel: '042-606-0000', lat: 48, lng: 46, updated: 0,
-    near: [['s1', 260], ['p1', 180], ['p3', 240], ['s2', 420]],
+    // 실시간 · 여유
+    id: '1872000024', name: '송촌소리 공영주차장', gu: '대전 대덕구', addr: '동춘당로',
+    type: '공영 노외', total: 24, available: 20, fee: '무료', dayMax: '',
+    hours: '24시간', tel: '042-608-5292', lat: 36.3669033, lng: 127.4362728, updated: 0,
+    near: [['s1', 210]],
   },
   {
-    id: 'L2', name: '대전역 환승주차장', gu: '대전 동구', addr: '대전 동구 중앙로 215 일원',
-    type: '노외', total: 420, available: 86, fee: '최초 1시간 무료 · 이후 30분 600원', dayMax: '일 최대 8,000원',
-    hours: '05:00 - 01:00', tel: '042-606-0010', lat: 18, lng: 86, updated: 0,
-    near: [['s3', 380], ['p4', 450], ['p1', 620]],
+    // 실시간 · 여유 (면수가 많은 쪽)
+    id: '1872000004', name: '송촌공영주차장', gu: '대전 대덕구', addr: '동춘당로',
+    type: '공영 노외', total: 92, available: 78, fee: '무료', dayMax: '',
+    hours: '24시간', tel: '042-632-3871', lat: 36.3638045, lng: 127.4404304, updated: 0,
+    near: [['s1', 430]],
   },
   {
-    // ★ 만차 케이스. 부정 상태에도 대안 CTA가 있는지 이 주차장으로 확인할 것.
-    id: 'L3', name: '목척교 공영주차장', gu: '대전 중구', addr: '대전 중구 중앙로 130 일원',
-    type: '노외', total: 64, available: 0, fee: '30분 무료 · 이후 10분 200원', dayMax: '일 최대 6,000원',
-    hours: '07:00 - 22:00', tel: '042-606-0030', lat: 72, lng: 38, updated: 0,
-    near: [['p2', 90], ['s1', 300], ['p3', 340]],
+    // ★ 실시간 · 만차. 부정 상태에도 대안 CTA가 있는지 이 주차장으로 확인할 것.
+    id: '1872000018', name: '법동시장 제2주차장', gu: '대전 대덕구', addr: '법동',
+    type: '공영 노외', total: 14, available: 0, fee: '무료', dayMax: '',
+    hours: '24시간', tel: '042-608-5292', lat: 36.3655236, lng: 127.4326846, updated: 0,
+    near: [['s1', 300]],
   },
   {
-    id: 'L4', name: '선화동 공영주차장', gu: '대전 중구', addr: '대전 중구 선화동 287 일원',
-    type: '노외', total: 88, available: 41, fee: '10분 250원', dayMax: '일 최대 9,000원',
-    hours: '24시간', tel: '042-606-0050', lat: 84, lng: 16, updated: 0,
-    near: [['p5', 140], ['s2', 380]],
+    // ★ 기본정보 제공 주차장. available: null = "모른다". 0(만차)과 다른 상태다.
+    id: '1872001238', name: '송촌 공영주차전용빌딩', gu: '대전 대덕구', addr: '대덕구 송촌동 458',
+    type: '공영 노외', total: 173, available: null, fee: '', dayMax: '',
+    hours: '24시간', tel: '', lat: 36.36535162, lng: 127.4381383, updated: 0,
+    near: [['s1', 190]],
   },
 ];
-
 /* ── 손님 데이터 ────────────────────────────────────────── */
 
 export const RECENT_QUERIES = ['대흥동 손칼국수', '두부두루치기', '으능정이 주차장', '소제동 브런치'];

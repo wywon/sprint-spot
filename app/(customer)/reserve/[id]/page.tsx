@@ -1,6 +1,6 @@
 'use client';
 
-import React, { use, useMemo, useState } from 'react';
+import React, { use, useEffect, useState } from 'react';
 import { notFound, useRouter } from 'next/navigation';
 import { Icon } from '@/components/ui/Icon';
 import { Badge, Button, Card } from '@/components/ui/primitives';
@@ -77,8 +77,27 @@ export default function ReservePage({ params }: { params: Promise<{ id: string }
   const store = getStore(id);
   if (!store) notFound();
 
-  // 오늘 날짜는 클라이언트에서만 계산 (서버/클라 불일치 방지)
-  const dates = useMemo(() => buildDates(new Date(2026, 7, 18)), []);
+  /**
+   * 날짜 후보는 마운트 뒤에 채운다.
+   * ─────────────────────────────────────────────────────────
+   * 예전 코드는 useMemo(() => buildDates(new Date(2026, 7, 18)), []) 였다.
+   * 문제가 둘이었다.
+   *
+   *   1. 8월 18일이 그대로 박혀 있었다. 오늘이 9월이어도 8월 18일부터 시작했다.
+   *   2. useMemo 는 서버 렌더에서도 돈다. 'use client' 가 붙어 있어도
+   *      Next.js 는 첫 HTML 을 서버에서 만든다. 거기서 new Date() 를 부르면
+   *      Vercel(UTC)과 브라우저(KST)의 날짜가 9시간 어긋난다.
+   *      한국 시간으로 자정~오전 9시 사이에는 서버가 '어제'를 그려서
+   *      hydration 불일치가 나고, 첫 날짜가 하루 밀린다.
+   *
+   * useEffect 는 브라우저에서만 돌기 때문에 두 문제를 한 번에 없앤다.
+   * 값이 채워지기 전 한 프레임 동안은 날짜 칸이 비는데, 그건 아래에서 자리만 잡아 둔다.
+   *
+   * ※ 서버가 계산하는 값(hours.isOpen, 예약 since)은 이 방법으로 못 고친다.
+   *   Vercel 환경변수에 TZ=Asia/Seoul 을 넣어야 한다. 아직 안 넣었다.
+   */
+  const [dates, setDates] = useState<ReturnType<typeof buildDates>>([]);
+  useEffect(() => { setDates(buildDates(new Date())); }, []);
   const ss = seatStats(store);
   const ps = parkStats(store);
 
@@ -159,6 +178,11 @@ export default function ReservePage({ params }: { params: Promise<{ id: string }
               <Card className="p-4">
                 <div className="text-[13px] font-extrabold text-ink-900 mb-3">언제 오시나요?</div>
                 <div className="flex gap-2 overflow-x-auto no-sb -mx-4 px-4 pb-1">
+                  {/* 마운트 전 한 프레임 — 칸 높이가 튀지 않게 자리만 잡아 둔다 */}
+                  {dates.length === 0 &&
+                    Array.from({ length: 5 }, (_, i) => (
+                      <div key={i} className="shrink-0 w-[54px] h-[64px] rounded-xl bg-ink-100 animate-pulse" />
+                    ))}
                   {dates.map((d) => (
                     <button
                       key={d.key}
