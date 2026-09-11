@@ -177,7 +177,7 @@ export default function ReservationDetailPage({ params }: { params: Promise<{ id
                 <div className="space-y-2 mt-3">
                   {sorted.map((o) => {
                     const key = `${o.kind}-${o.id}`;
-                    const lv = levelOf({ total: o.total, available: o.available });
+                    const lv = levelOf({ total: o.total, available: o.available, unknown: o.unknown });
                     const on = picked === key;
                     return (
                       <button
