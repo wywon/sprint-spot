@@ -54,7 +54,7 @@ interface TableSpec {
 
 function mkTables(spec: TableSpec[]): StoreTable[] {
   return spec.map((t) => ({
-    id: t.id, seats: t.seats, status: t.status, row: t.row, col: t.col, w: t.w || 1,
+    id: t.id, code: t.id, seats: t.seats, status: t.status, row: t.row, col: t.col, w: t.w || 1,
     guest: t.guest ?? null, since: t.since ?? null, cleaningAt: null,
     resAt: t.resAt ?? null, resName: t.resName ?? null, resParty: t.resParty ?? null,
   }));

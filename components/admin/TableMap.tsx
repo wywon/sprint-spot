@@ -45,7 +45,7 @@ export const TableMap = ({
           {row.map((t) => {
             const st = t.status === 'cleaning' ? 'available' : t.status;
             const cfg = TABLE[st];
-            const sel = selectedId === t.id;
+            const sel = selectedId === t.code;
             return (
               <button
                 key={t.id}

@@ -50,7 +50,7 @@ export interface ParkingSlot {
 export interface StoreTable {
   id: string;            // 't1' — ★ 손님 화면에 절대 노출하지 않는다
   /** 'T04' — 관리자 배치도 라벨. 손님 화면에는 절대 쓰지 않는다 */
-  code?: string;
+  code: string;
   seats: number;
   status: TableStatus;
   row: number;
