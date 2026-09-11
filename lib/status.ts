@@ -20,11 +20,51 @@ import type { ParkingSlot, PartnerStore, PublicLot, SlotStatus, StoreTable } fro
  * 관리자가 손으로 지정한 값이 살아 있으면 그게 이기고, 만료됐으면 센서 값으로 돌아간다.
  * 이렇게 두 필드를 나눠 둔 덕분에 센서(D)와 관리자(B)가 서로 값을 덮어쓰지 않는다.
  */
+
+
 export function slotStatus(s: ParkingSlot): SlotStatus {
   if (s.manualStatus && s.manualUntil && s.manualUntil > Date.now()) return s.manualStatus;
   return s.autoStatus;
 }
+/* ── 센서 오프라인 판정 (이슈 #91) ─────────────────────────────────
+ *
+ * 센서 데이터를 우리가 당겨오는(GET) 게 아니라 중계 서버가 밀어 넣는(POST)
+ * 구조다. 받는 쪽은 "안 보내는 것"과 "죽은 것"을 구분할 수 없다.
+ * /api/detect 는 들어올 때마다 Store.sensor 를 'online' 으로 쓰기만 하고,
+ * 'offline' 으로 되돌리는 코드가 어디에도 없었다. 그래서 중계 서버가 죽으면
+ * 앱이 영원히 "정상 감지 중" + 마지막 값을 보여줬다.
+ * → "가능하다고 했는데 가보니 없다". 이 서비스에서 제일 치명적인 실패다.
+ *
+ * Vercel Hobby 플랜은 크론이 하루 1회라 배치로 못 돌린다. 그래서 쓸 때가
+ * 아니라 읽을 때 계산한다. GET /api/stores 와 GET /api/stores/[id] 가 부른다.
+ */
 
+/** 이 시간 넘게 소식이 없으면 오프라인. 중계 서버 하트비트(60초)의 3배 */
+export const SENSOR_OFFLINE_MS = 180_000;
+
+export function sensorOffline(a: {
+  /** DB 의 Store.sensor */
+  stored: string | null | undefined;
+  /** Store.parkingUpdated (ms) */
+  updated: number | null | undefined;
+  /**
+   * 이 매장 주차면 중 lastSeenAt 이 하나라도 있는가
+   * = 센서가 실제로 연결된 적이 있는 매장인가.
+   *
+   * ★ 이 조건이 없으면 목업 매장(s2·s3)이 3분 뒤 전부 '확인 불가'가 된다.
+   *   센서를 단 적이 없는 매장까지 "센서가 죽었다"고 말하는 건 틀린 말이다.
+   *   나중에 전 매장에 센서가 깔리면 Store 에 sensorManaged 같은 칼럼을
+   *   두고 이 휴리스틱을 걷어내는 게 맞다.
+   */
+  everSeen: boolean;
+  now?: number;
+}): boolean {
+  // 관리자가 손으로 끈 것은 항상 이긴다
+  if (a.stored === 'offline') return true;
+  if (!a.everSeen) return false;
+  if (!a.updated) return true;
+  return (a.now ?? Date.now()) - a.updated > SENSOR_OFFLINE_MS;
+}
 export interface SeatStats {
   total: number;
   available: number;
@@ -130,6 +170,36 @@ export function parkStats(store: PartnerStore): ParkStats {
   };
 }
 
+/**
+ * [b7] 배치 편집에서 '주차면 추가' 를 눌렀을 때 붙일 다음 번호.
+ *
+ * ★ 접두사를 'A' 로 고정하지 않는다.
+ *   s1 은 아두이노 모형과 맞추느라 P1~P10 을 쓴다. 접두사를 고정해 두면
+ *   P 배치에 A11 이 섞여 들어가고, 센서 쪽 설정과 글자가 어긋난 면이 생긴다.
+ *   POST /api/detect 는 code 로만 주차면을 찾으므로 그 면은 영영 안 바뀐다.
+ *   그래서 지금 있는 면들이 쓰는 접두사를 그대로 이어 쓴다.
+ *
+ * 접두사가 여러 개면(A·B 를 같이 쓰는 매장) 가장 많이 쓰는 쪽을 따른다.
+ * 주차면이 하나도 없으면 'P' 로 시작한다.
+ */
+export function nextSlotCode(slots: { code: string }[]): string {
+  const count = new Map<string, number>();
+  let maxNum = 0;
+
+  for (const s of slots) {
+    const m = /^([A-Za-z]+)(\d*)$/.exec(s.code);
+    if (!m) continue;
+    count.set(m[1], (count.get(m[1]) ?? 0) + 1);
+    maxNum = Math.max(maxNum, Number(m[2] || 0));
+  }
+
+  let prefix = 'P';
+  let best = 0;
+  count.forEach((n, p) => { if (n > best) { best = n; prefix = p; } });
+
+  return `${prefix}${maxNum + 1}`;
+}
+
 /** 공영주차장은 잔여 대수만 알 수 있다 (면 단위 정보가 없다) */
 export const lotStats = (lot: PublicLot) => ({
   total: lot.total,
@@ -137,9 +207,20 @@ export const lotStats = (lot: PublicLot) => ({
   occupied: lot.available == null ? null : lot.total - lot.available,
 });
 
-/** 잔여 비율 → 여유도 등급 */
-export function levelOf(st: { total: number; available: number | null } | null | undefined): LevelToken {
+/**
+ * 잔여 비율 → 여유도 등급
+ *
+ * [b7] unknown 을 함께 본다.
+ *   센서가 아직 한 번도 값을 안 줬거나 전부 흔들리면 available 은 0 이 된다.
+ *   그걸 '만차'로 그리면 "자리 없음"이라고 단정하는 셈인데, 사실은 '모른다'다.
+ *   README 의 원칙 그대로 — 0(만차)과 '모른다'는 완전히 다른 이야기다.
+ *   공영주차장(lotStats)은 unknown 필드가 없어서 예전과 똑같이 동작한다.
+ */
+export function levelOf(
+  st: { total: number; available: number | null; unknown?: number | null } | null | undefined,
+): LevelToken {
   if (!st || st.available == null) return LEVEL.none;
+  if (st.available === 0 && (st.unknown ?? 0) > 0) return LEVEL.none;
   if (st.available === 0) return LEVEL.full;
   const r = st.available / st.total;
   return r >= 0.3 ? LEVEL.plenty : r >= 0.12 ? LEVEL.some : LEVEL.few;
@@ -188,6 +269,8 @@ export function parkingOptions(store: PartnerStore | null, lots: PublicLot[]): P
       badge: '공영주차장',
     };
   });
+
+  
 
   return [...own, ...near];
 }
