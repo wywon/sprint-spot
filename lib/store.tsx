@@ -290,9 +290,9 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
     );
     setLots((prev) => prev.map((l) => ({ ...l, updated: now - rnd(40000, 210000) })));
     setLog([
-      { t: now - 32000,  who: '센서',   msg: 'B3 감지값 불안정 — 확인 필요', tone: 'warn' },
-      { t: now - 140000, who: '센서',   msg: 'A7 주차 중 → 주차 가능', tone: 'ok' },
-      { t: now - 260000, who: '최영호', msg: 'A3 수동 지정 → 주차 가능', tone: 'warn' },
+      { t: now - 32000,  who: '센서',   msg: 'P9 감지값 불안정 — 확인 필요', tone: 'warn' },
+      { t: now - 140000, who: '센서',   msg: 'P4 주차 중 → 주차 가능', tone: 'ok' },
+      { t: now - 260000, who: '최영호', msg: 'P2 수동 지정 → 주차 가능', tone: 'warn' },
       { t: now - 480000, who: '시스템', msg: '게이트웨이 재연결 완료', tone: 'ok' },
     ]);
     try {

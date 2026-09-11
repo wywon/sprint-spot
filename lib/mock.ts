@@ -91,11 +91,26 @@ export const PARTNER_STORES: PartnerStore[] = [
     ]),
     parking: {
       fee: '식사 시 1시간 무료 · 이후 10분 300원', updated: 0,
+      /**
+       * ★ 시연용 — 아두이노 주차장 미니어처 도면과 1:1로 맞춘 배치다.
+       *
+       *   모형은 가운데 주행통로를 사이에 두고 주차면이 마주 본다.
+       *     왼쪽 줄 6면 P1~P6 · 오른쪽 줄 4면 P7~P10
+       *     오른쪽 줄(P7~P10)은 왼쪽의 P1~P4 와 같은 칸에 나란히 선다.
+       *   SlotGrid 는 줄을 가로로 그리므로, 모형을 시계 방향으로 90도 돌린 모양이다.
+       *   입출차 감지 센서와 LED 가 붙은 쪽 끝이 P6·P10 이라 이 둘만 nearGate 다.
+       *
+       * ★ code 는 아두이노 Serial 의 '1번~10번' 과 그대로 대응한다 (P{n} ↔ n번).
+       *   노트북 중계 서버가 POST /api/detect 로 보낼 때
+       *     { storeId: 's1', slots: [{ code: 'P1', status: 'occupied' }, …] }
+       *   형태면 바로 붙는다. 여기 번호를 바꾸면 센서 쪽 설정도 같이 바꿔야 한다.
+       *
+       * ★ 아래 status 는 아두이노를 붙이기 전 초깃값일 뿐이다.
+       *   /api/detect 가 한 번 들어오면 전부 실제 센서 값으로 덮어쓴다.
+       */
       slots: mkSlots([
-        { zone: 'A', codes: ['A1','A2','A3','A4','A5'], status: ['occupied','occupied','available','occupied','available'], gate: ['A1','A2','A3'] },
-        { zone: 'A', codes: ['A6','A7','A8','A9','A10'], status: ['occupied','available','occupied','occupied','occupied'] },
-        { zone: 'B', codes: ['B1','B2','B3','B4','B5'], status: ['occupied','occupied','unknown','available','occupied'], type: [null,null,null,'ev',null] },
-        { zone: 'B', codes: ['B6','B7','B8','B9','B10'], status: ['occupied','occupied','available','occupied','available'], type: [null,null,null,null,'disabled'] },
+        { zone: 'A', codes: ['P1','P2','P3','P4','P5','P6'], status: ['occupied','available','occupied','available','occupied','available'], gate: ['P6'] },
+        { zone: 'B', codes: ['P7','P8','P9','P10'],          status: ['occupied','occupied','unknown','available'],                        gate: ['P10'] },
       ]),
     },
   },

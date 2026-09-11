@@ -9,6 +9,7 @@ import { SlotGrid, SlotLegend } from '@/components/admin/SlotGrid';
 import { TableMap } from '@/components/admin/TableMap';
 import { cx } from '@/lib/format';
 import { ADMIN_STORE_ID } from '@/lib/tokens';
+import { nextSlotCode } from '@/lib/status';
 import { useApp } from '@/lib/store';
 import type { ParkingSlot, PartnerStore, StoreTable } from '@/lib/types';
 
@@ -655,8 +656,11 @@ function SetTables({ store }: { store: PartnerStore }) {
  * [b6] 주차장 배치도
  *
  * ★ 주차면 번호(code)는 센서 쪽 설정과 글자 하나까지 같아야 한다.
- *   POST /api/detect 가 code 로만 주차면을 찾기 때문이다. 여기서 'A1' 을
- *   'P01' 로 바꾸면 센서는 계속 A1 을 보내고 화면은 영영 안 바뀐다.
+ *   POST /api/detect 가 code 로만 주차면을 찾기 때문이다. 여기서 'P1' 을
+ *   'P01' 로 바꾸면 센서는 계속 P1 을 보내고 화면은 영영 안 바뀐다.
+ *
+ * ★ 시연 매장 s1 은 아두이노 모형 도면(P1~P10)을 그대로 쓴다.
+ *   P{n} 이 아두이노 Serial 의 'n번' 이다. 번호를 바꾸려면 스케치도 같이 고칠 것.
  */
 function SetParking({ store }: { store: PartnerStore }) {
   const { setSlots, setEditing, pushToast } = useApp();
@@ -726,11 +730,12 @@ function SetParking({ store }: { store: PartnerStore }) {
     for (let r = 0; r < 8; r++) {
       for (let c = 0; c < 10; c++) {
         if (!taken(r, c, null)) {
-          const nums = draft.map((x) => parseInt(x.code.replace(/\D/g, ''), 10) || 0);
-          const code = 'A' + (Math.max(0, ...nums) + 1);
+          const code = nextSlotCode(draft);
+          // 같은 줄에 이미 있는 면의 구역을 따라간다 (P7~P10 줄에 추가하면 B 구역)
+          const zone = draft.find((x) => x.row === r)?.zone ?? draft[0]?.zone ?? 'A';
           setDraft((d) => (d ? [...d, {
             id: code,
-            code, row: r, col: c, zone: 'A',
+            code, row: r, col: c, zone,
             // ★ 센서가 아직 안 붙었으므로 unknown 이다. available 로 두면
             //   손님 앱이 없는 자리를 있다고 말한다 (규칙 3).
             autoStatus: 'unknown' as const,

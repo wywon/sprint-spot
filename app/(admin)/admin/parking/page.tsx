@@ -8,7 +8,7 @@ import { AdminTopbar } from '@/components/admin/Sidebar';
 import { SlotGrid, SlotLegend } from '@/components/admin/SlotGrid';
 import { cx, agoText } from '@/lib/format';
 import { ADMIN_STORE_ID, SLOT } from '@/lib/tokens';
-import { parkStats, slotStatus } from '@/lib/status';
+import { nextSlotCode, parkStats, slotStatus } from '@/lib/status';
 import { useApp, useNow } from '@/lib/store';
 import type { ParkingSlot } from '@/lib/types';
 
@@ -79,10 +79,11 @@ export default function AdminParkingPage() {
     for (let r = 0; r < 8; r++) {
       for (let c = 0; c < 10; c++) {
         if (!taken(r, c, null)) {
-          const nums = draft.map((s) => parseInt(s.code.replace(/\D/g, ''), 10) || 0);
-          const code = 'A' + (Math.max(0, ...nums) + 1);
+          const code = nextSlotCode(draft);
+          // 같은 줄에 이미 있는 면의 구역을 따라간다 (P7~P10 줄에 추가하면 B 구역)
+          const zone = draft.find((s) => s.row === r)?.zone ?? draft[0]?.zone ?? 'A';
           setDraft((d) => (d ? [...d, {
-            code, row: r, col: c, zone: 'A', autoStatus: 'available',
+            code, row: r, col: c, zone, autoStatus: 'available',
             manualStatus: null, manualUntil: null, manualBy: null, type: null, nearGate: false, confidence: 0.98,
           }] : d));
           setEditSel(code);
