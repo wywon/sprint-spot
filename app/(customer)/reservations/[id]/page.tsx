@@ -9,6 +9,7 @@ import { SubHeader, StickyCta } from '@/components/customer/Shell';
 import { cx, fmtDateK } from '@/lib/format';
 import { levelOf, parkingOptions, type ParkingOption } from '@/lib/status';
 import { useApp } from '@/lib/store';
+import ReceiptUpload from './ReceiptUpload';
 
 /**
  * 예약 상세
@@ -32,8 +33,10 @@ export default function ReservationDetailPage({ params }: { params: Promise<{ id
   const [picked, setPicked] = useState<string | null>(null);
   const [nav, setNav] = useState(false);
   const [askCancel, setAskCancel] = useState(false);
+  
 
   const res = getRes(id);
+  
   if (!res) notFound();
   const store = getStore(res.storeId);
   const past = res.status !== 'upcoming';
@@ -215,37 +218,25 @@ export default function ReservationDetailPage({ params }: { params: Promise<{ id
           )}
 
           {/* ── 지난 예약: 영수증 인증 ── */}
-          {past && res.status !== 'canceled' && (
-            <Card className="p-4">
-              <div className="text-[13px] font-extrabold text-ink-900 mb-3">영수증 인증</div>
-              {res.receipt ? (
-                <div className="rounded-xl bg-ok-50 border border-ok-200 px-3.5 py-3 flex items-center gap-2.5">
-                  <Icon n="check" s={17} cls="text-ok-500 shrink-0" />
-                  <div>
-                    <div className="text-[12.5px] font-extrabold text-ok-600">영수증 인증이 완료되었어요</div>
-                    <div className="text-[11.5px] font-medium text-ok-600/80 mt-0.5">이제 리뷰를 쓰실 수 있어요</div>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <button
-                    onClick={() => {
-                      uploadReceipt(res.id);
-                      pushToast({ title: '영수증 인증이 완료되었어요', desc: '이제 리뷰를 쓰실 수 있어요', tone: 'ok', icon: 'check' });
-                    }}
-                    className="w-full rounded-2xl border-2 border-dashed border-ink-300 bg-ink-50 py-7 flex flex-col items-center gap-2 active:scale-[.99] transition-transform"
-                  >
-                    <Icon n="receipt" s={26} cls="text-ink-400" />
-                    <span className="text-[13px] font-extrabold text-ink-700">영수증 사진 올리기</span>
-                    <span className="text-[11.5px] font-medium text-ink-500">촬영하거나 갤러리에서 선택</span>
-                  </button>
-                  <div className="mt-3 text-[11.5px] font-medium text-ink-500 leading-relaxed">
-                    실제로 방문하신 분만 리뷰를 쓸 수 있도록 영수증을 확인해요. 사진은 인증 후 바로 삭제됩니다.
-                  </div>
-                </>
-              )}
-            </Card>
-          )}
+          {res.status === 'done' && (
+          <Card className="p-4">
+            <div className="text-[13px] font-extrabold text-ink-900 mb-3">영수증 인증</div>
+            <ReceiptUpload
+              reservationId={res.id}
+              phone={res.phone}
+              initialReceipt={!!res.receipt}
+              onUploaded={() => {
+                uploadReceipt(res.id);
+                pushToast({
+                  title: '영수증 인증이 완료되었어요',
+                  desc: '이제 리뷰를 쓰실 수 있어요',
+                  tone: 'ok',
+                  icon: 'check',
+                });
+              }}
+            />
+          </Card>
+        )}
         </div>
       </div>
 
@@ -262,7 +253,7 @@ export default function ReservationDetailPage({ params }: { params: Promise<{ id
               disabled={!canReview}
               onClick={() => router.push(`/reservations/${res.id}/review`)}
             >
-              {canReview ? '리뷰 쓰기' : '영수증을 먼저 인증해 주세요'}
+              {canReview ? '리뷰 쓰기' : !res.receipt ? '영수증을 먼저 인증해 주세요' : '방문 확인이 끝나면 리뷰를 쓸 수 있어요'}
             </Button>
           )
         ) : res.status === 'canceled' ? (
@@ -286,7 +277,7 @@ export default function ReservationDetailPage({ params }: { params: Promise<{ id
         )}
       </StickyCta>
 
-      <NavSheet open={nav} onClose={() => setNav(false)} target={pickedOpt?.name ?? ''} />
+      <NavSheet open={nav} onClose={() => setNav(false)} target={pickedOpt?.name ?? ''} lat={pickedOpt?.lat} lng={pickedOpt?.lng} />
 
       <ConfirmModal
         open={askCancel}

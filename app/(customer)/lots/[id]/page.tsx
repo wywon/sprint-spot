@@ -69,8 +69,7 @@ export default function LotDetailPage({ params }: { params: Promise<{ id: string
               <Badge tone={lv.tone} icon={lv.icon} solid={full}>{lv.label}</Badge>
             </div>
 
-            <Gauge used={st.occupied} total={st.total} tone={lv.tone === 'ok' ? 'ok' : lv.tone === 'busy' ? 'busy' : 'warn'} label="이용률" big />
-
+            <Gauge used={st.occupied ?? 0} total={st.total} tone={lv.tone === 'ok' ? 'ok' : lv.tone === 'busy' ? 'busy' : 'warn'} label="이용률" big />
             <div className="grid grid-cols-3 gap-2 mt-4">
               {[
                 ['전체', st.total, 'text-ink-900'],
@@ -150,7 +149,7 @@ export default function LotDetailPage({ params }: { params: Promise<{ id: string
         </Button>
       </StickyCta>
 
-      <NavSheet open={nav} onClose={() => setNav(false)} target={lot.name} />
+      <NavSheet open={nav} onClose={() => setNav(false)} target={lot.name} lat={lot.lat} lng={lot.lng} />
     </div>
   );
 }

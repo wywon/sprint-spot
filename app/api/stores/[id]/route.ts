@@ -1,7 +1,7 @@
 // app/api/stores/[id]/route.ts
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { slotStatus } from '@/lib/status'
+import { sensorOffline, slotStatus } from '@/lib/status'
 import type { ParkingSlot } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -69,7 +69,14 @@ export async function GET(
     }
 
     // 주차 집계 — lib/status.ts 규칙 재사용
-    const offline = s.sensor === 'offline'
+    // 센서 소식이 3분 넘게 없으면 offline 으로 본다 (이슈 #91). DB 값만 믿지 않는다.
+    const parkingUpdated = s.parkingUpdated ? s.parkingUpdated.getTime() : 0
+    const offline = sensorOffline({
+      stored: s.sensor,
+      updated: parkingUpdated,
+      everSeen: s.slots.some((p) => p.lastSeenAt !== null),
+      now,
+    })
     let available: number | null = null
     let unknown: number | null = null
     if (!offline) {
@@ -88,7 +95,6 @@ export async function GET(
 
     const [openAt = '', closeAt = ''] = (s.open ?? '').split('-').map((v) => v.trim())
     const hhmm = new Date(now).toTimeString().slice(0, 5)
-    const parkingUpdated = s.parkingUpdated ? s.parkingUpdated.getTime() : 0
 
     return NextResponse.json({
       id: s.id,
@@ -137,7 +143,8 @@ export async function GET(
         total: s.slots.length,
         available,
         unknown,
-        sensor: s.sensor,
+        // ★ DB 칼럼이 아니라 방금 계산한 값을 내려보낸다
+        sensor: offline ? 'offline' : 'online',
         updated: parkingUpdated,
         slots: s.slots.map((p) => ({
           id: p.id,

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { Button, Card, Gauge, Segmented } from '@/components/ui/primitives';
 import { AdminTopbar } from '@/components/admin/Sidebar';
@@ -9,7 +9,7 @@ import { SlotGrid, SlotLegend } from '@/components/admin/SlotGrid';
 import { TableMap } from '@/components/admin/TableMap';
 import { cx } from '@/lib/format';
 import { ADMIN_STORE_ID } from '@/lib/tokens';
-import { STAT_DOW, STAT_HEAT, STAT_HOUR, STAT_PARTY } from '@/lib/mock';
+import { nextSlotCode } from '@/lib/status';
 import { useApp } from '@/lib/store';
 import type { ParkingSlot, PartnerStore, StoreTable } from '@/lib/types';
 
@@ -410,58 +410,113 @@ function InfoField({
 
 /* ── 테이블 구성 · 배치도 편집 ─────────────────────────── */
 
+/**
+ * [b6] 테이블 배치도 — 저장이 서버까지 간다
+ *
+ * ★ 왜 code 로 고르는가
+ *   DB 의 id 는 's1_t1' 이고 code 가 't1' 이다. 새로 추가한 테이블은 아직 DB 에
+ *   없어서 id 가 없다. 화면과 서버가 테이블을 알아보는 기준을 code 하나로 통일한다.
+ *
+ * ★ 왜 편집 중 폴링을 멈추는가
+ *   3초마다 서버를 다시 읽어 store 를 갈아 끼우므로, 안 멈추면 방금 옮긴 테이블이
+ *   3초 뒤 제자리로 돌아간다. 매장 정보 탭이 draft 를 쓰는 것과 같은 이유다.
+ */
 function SetTables({ store }: { store: PartnerStore }) {
-  const { setTables, pushToast } = useApp();
+  const { setTables, setEditing, pushToast } = useApp();
   const [edit, setEdit] = useState(false);
   const [draft, setDraft] = useState<StoreTable[] | null>(null);
   const [sel, setSel] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const list = edit && draft ? draft : store.tables;
   const view = { ...store, tables: list };
-  const t = sel ? list.find((x) => x.id === sel) ?? null : null;
+  const t = sel ? list.find((x) => x.code === sel) ?? null : null;
   const seats = list.reduce((a, b) => a + b.seats, 0);
 
-  const start = () => { setDraft(store.tables.map((x) => ({ ...x }))); setSel(store.tables[0]?.id ?? null); setEdit(true); };
+  useEffect(() => {
+    setEditing(edit);
+    return () => setEditing(false);
+  }, [edit, setEditing]);
+
+  /* 저장하지 않고 탭을 닫으려 하면 붙잡는다 */
+  useEffect(() => {
+    if (!edit) return;
+    const h = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, [edit]);
+
+  const start = () => {
+    setDraft(store.tables.map((x) => ({ ...x })));
+    setSel(store.tables[0]?.code ?? null);
+    setEdit(true);
+  };
   const cancel = () => { setEdit(false); setDraft(null); setSel(null); };
-  const save = () => {
-    if (!draft) return;
-    setTables(store.id, draft, { who: '최영호', msg: `테이블 배치도 수정 · ${draft.length}개`, tone: 'brand' });
-    pushToast({ title: '테이블 배치도를 저장했어요', desc: `총 ${draft.length}개 · ${draft.reduce((a, b) => a + b.seats, 0)}석`, tone: 'ok', icon: 'check' });
+
+  /* ★ 실패하면 편집 모드를 닫지 않는다. 몇 분 걸려 옮긴 배치를 오류 한 번에
+       버리게 하면 안 된다. 실패 안내 문구는 서버가 보내고 store.tsx 가 띄운다. */
+  const save = async () => {
+    if (!draft || saving) return;
+    setSaving(true);
+    const ok = await setTables(store.id, draft, {
+      who: '최영호', msg: `테이블 배치도 수정 · ${draft.length}개`, tone: 'brand',
+    });
+    setSaving(false);
+    if (!ok) return;
+
+    pushToast({
+      title: '테이블 배치도를 저장했어요',
+      desc: `총 ${draft.length}개 · ${draft.reduce((a, b) => a + b.seats, 0)}석`,
+      tone: 'ok', icon: 'check',
+    });
     cancel();
   };
 
-  const patch = (id: string, p: Partial<StoreTable>) =>
-    setDraft((d) => (d ? d.map((x) => (x.id === id ? { ...x, ...p } : x)) : d));
+  const patch = (code: string, p: Partial<StoreTable>) =>
+    setDraft((d) => (d ? d.map((x) => (x.code === code ? { ...x, ...p } : x)) : d));
   const taken = (r: number, c: number, except: string | null) =>
-    !!draft?.some((x) => x.id !== except && x.row === r && x.col === c);
+    !!draft?.some((x) => x.code !== except && x.row === r && x.col === c);
   const move = (dr: number, dc: number) => {
     if (!t) return;
     const nr = Math.max(0, Math.min(5, t.row + dr));
     const nc = Math.max(0, Math.min(3, t.col + dc));
-    if (taken(nr, nc, t.id)) return;
-    patch(t.id, { row: nr, col: nc });
+    if (taken(nr, nc, t.code)) return;
+    patch(t.code, { row: nr, col: nc });
   };
+
+  /* 못 가는 방향은 눌러도 아무 일이 없어 고장난 것처럼 보인다. 미리 꺼 둔다 */
+  const canMove = (dr: number, dc: number) => {
+    if (!t) return false;
+    const nr = t.row + dr;
+    const nc = t.col + dc;
+    if (nr < 0 || nr > 5 || nc < 0 || nc > 3) return false;
+    return !taken(nr, nc, t.code);
+  };
+
   const add = () => {
     if (!draft) return;
     for (let r = 0; r < 6; r++) {
       for (let c = 0; c < 4; c++) {
         if (!taken(r, c, null)) {
-          const nums = draft.map((x) => parseInt(x.id.replace(/\D/g, ''), 10) || 0);
-          const id = 't' + (Math.max(0, ...nums) + 1);
+          // ★ code 로 번호를 만든다. id('s1_t1')에서 숫자를 뽑으면 11 이 나온다
+          const nums = draft.map((x) => parseInt(x.code.replace(/\D/g, ''), 10) || 0);
+          const code = 't' + (Math.max(0, ...nums) + 1);
           setDraft((d) => (d ? [...d, {
-            id, seats: 4, status: 'available', row: r, col: c, w: 1,
+            id: code,        // 아직 DB 에 없다. 저장 뒤 서버가 준 id 로 채워진다
+            code, seats: 4, status: 'available' as const, row: r, col: c, w: 1,
             guest: null, since: null, cleaningAt: null, resAt: null, resName: null, resParty: null,
           }] : d));
-          setSel(id);
+          setSel(code);
           return;
         }
       }
     }
     pushToast({ title: '더 놓을 자리가 없어요', desc: '기존 테이블을 옮긴 뒤 추가해 주세요', tone: 'warn', icon: 'alert' });
   };
+
   const del = () => {
     if (!t) return;
-    setDraft((d) => (d ? d.filter((x) => x.id !== t.id) : d));
+    setDraft((d) => (d ? d.filter((x) => x.code !== t.code) : d));
     setSel(null);
   };
 
@@ -475,8 +530,10 @@ function SetTables({ store }: { store: PartnerStore }) {
           </div>
           {edit ? (
             <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={cancel}>취소</Button>
-              <Button variant="primary" size="sm" icon="check" onClick={save}>배치 저장</Button>
+              <Button variant="ghost" size="sm" onClick={cancel} disabled={saving}>취소</Button>
+              <Button variant="primary" size="sm" icon="check" onClick={save} disabled={saving}>
+                {saving ? '저장하는 중…' : '배치 저장'}
+              </Button>
             </div>
           ) : (
             <Button variant="outline" size="sm" icon="pencil" onClick={start}>배치도 편집</Button>
@@ -488,14 +545,15 @@ function SetTables({ store }: { store: PartnerStore }) {
             <Icon n="question" s={16} cls="text-brand-600 shrink-0 mt-px" />
             <div className="text-[12px] font-medium text-brand-700 leading-relaxed">
               테이블을 눌러 선택한 뒤 오른쪽에서 <b>좌석 수 · 위치 · 폭</b>을 바꿔 주세요.
-              손님에게는 <b>테이블 번호가 보이지 않고</b>, 좌석 수와 남은 자리 수만 전달됩니다.
+              편집하는 동안에는 <b>실시간 갱신이 멈춥니다.</b> 손님에게는 테이블 번호가 보이지 않고,
+              좌석 수와 남은 자리 수만 전달됩니다.
             </div>
           </div>
         )}
 
         <div className="rounded-2xl bg-ink-50 border border-ink-200 p-6">
           <div className="text-[10px] font-extrabold text-ink-400 tracking-[.25em] text-center mb-4">창 　 측</div>
-          <TableMap store={view} cols={4} edit={edit} onSelect={(x) => edit && setSel(x.id)} selectedId={edit ? sel : null} />
+          <TableMap store={view} cols={4} edit={edit} onSelect={(x) => edit && setSel(x.code)} selectedId={edit ? sel : null} />
           <div className="mt-5 h-8 rounded-lg bg-ink-900 text-white text-[10px] font-extrabold grid place-items-center tracking-[.2em]">
             ▲ 출 입 구 · 카 운 터
           </div>
@@ -513,27 +571,34 @@ function SetTables({ store }: { store: PartnerStore }) {
 
             <div className="text-[11.5px] font-extrabold text-ink-500 mb-2">좌석 수</div>
             <div className="flex items-center gap-2 mb-5">
-              <Button variant="outline" size="sm" icon="minus" onClick={() => patch(t.id, { seats: Math.max(1, t.seats - 1) })} />
+              <Button variant="outline" size="sm" icon="minus" onClick={() => patch(t.code, { seats: Math.max(1, t.seats - 1) })} />
               <span className="grow text-center text-[18px] font-extrabold text-ink-900 tnum">
                 {t.seats}<span className="text-[12px] text-ink-500 ml-0.5">석</span>
               </span>
-              <Button variant="outline" size="sm" icon="plus" onClick={() => patch(t.id, { seats: Math.min(12, t.seats + 1) })} />
+              <Button variant="outline" size="sm" icon="plus" onClick={() => patch(t.code, { seats: Math.min(12, t.seats + 1) })} />
             </div>
 
             <div className="text-[11.5px] font-extrabold text-ink-500 mb-2">위치 이동</div>
-            <div className="grid grid-cols-3 gap-1.5 w-[148px] mx-auto mb-5">
-              <span /><Button variant="outline" size="sm" onClick={() => move(-1, 0)}>↑</Button><span />
-              <Button variant="outline" size="sm" onClick={() => move(0, -1)}>←</Button>
+            <div className="grid grid-cols-3 gap-1.5 w-[148px] mx-auto mb-2">
+              <span />
+              <Button variant="outline" size="sm" disabled={!canMove(-1, 0)} onClick={() => move(-1, 0)}>↑</Button>
+              <span />
+              <Button variant="outline" size="sm" disabled={!canMove(0, -1)} onClick={() => move(0, -1)}>←</Button>
               <div className="h-9 rounded-xl bg-ink-100 grid place-items-center text-[10.5px] font-extrabold text-ink-400">이동</div>
-              <Button variant="outline" size="sm" onClick={() => move(0, 1)}>→</Button>
-              <span /><Button variant="outline" size="sm" onClick={() => move(1, 0)}>↓</Button><span />
+              <Button variant="outline" size="sm" disabled={!canMove(0, 1)} onClick={() => move(0, 1)}>→</Button>
+              <span />
+              <Button variant="outline" size="sm" disabled={!canMove(1, 0)} onClick={() => move(1, 0)}>↓</Button>
+              <span />
+            </div>
+            <div className="text-[11px] font-medium text-ink-500 text-center mb-5 leading-relaxed">
+              다른 테이블이 있는 칸으로는 옮길 수 없어요. 먼저 그 테이블을 옮겨 주세요.
             </div>
 
             <div className="text-[11.5px] font-extrabold text-ink-500 mb-2">차지하는 폭</div>
             <Segmented
               full size="sm"
               value={String(t.w || 1)}
-              onChange={(v) => patch(t.id, { w: Number(v) })}
+              onChange={(v) => patch(t.code, { w: Number(v) })}
               options={[{ value: '1', label: '1칸' }, { value: '2', label: '2칸 (긴 테이블)' }]}
             />
 
@@ -541,9 +606,14 @@ function SetTables({ store }: { store: PartnerStore }) {
             <Segmented
               full size="sm"
               value={t.status === 'disabled' ? 'off' : 'on'}
-              onChange={(v) => patch(t.id, { status: v === 'off' ? 'disabled' : 'available' })}
+              onChange={(v) => patch(t.code, { status: v === 'off' ? 'disabled' : 'available' })}
               options={[{ value: 'on', label: '사용' }, { value: 'off', label: '사용 안 함' }]}
             />
+            {t.status !== 'available' && t.status !== 'disabled' && (
+              <div className="mt-2 text-[11.5px] font-bold text-warn-600 leading-relaxed">
+                지금 사용 중인 자리라 사용 여부는 바뀌지 않습니다. 손님이 나간 뒤에 바꿔 주세요.
+              </div>
+            )}
 
             <div className="flex gap-2 mt-5 pt-5 border-t border-ink-200">
               <Button variant="outline" size="sm" icon="plus" full onClick={add}>테이블 추가</Button>
@@ -582,22 +652,56 @@ function SetTables({ store }: { store: PartnerStore }) {
 
 /* ── 주차장 구성 · 배치도 편집 ─────────────────────────── */
 
+/**
+ * [b6] 주차장 배치도
+ *
+ * ★ 주차면 번호(code)는 센서 쪽 설정과 글자 하나까지 같아야 한다.
+ *   POST /api/detect 가 code 로만 주차면을 찾기 때문이다. 여기서 'P1' 을
+ *   'P01' 로 바꾸면 센서는 계속 P1 을 보내고 화면은 영영 안 바뀐다.
+ *
+ * ★ 시연 매장 s1 은 아두이노 모형 도면(P1~P10)을 그대로 쓴다.
+ *   P{n} 이 아두이노 Serial 의 'n번' 이다. 번호를 바꾸려면 스케치도 같이 고칠 것.
+ */
 function SetParking({ store }: { store: PartnerStore }) {
-  const { setSlots, pushToast } = useApp();
+  const { setSlots, setEditing, pushToast } = useApp();
   const [edit, setEdit] = useState(false);
   const [draft, setDraft] = useState<ParkingSlot[] | null>(null);
   const [sel, setSel] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const list = edit && draft ? draft : store.parking.slots;
   // 편집 중에는 센서 오류 상태를 무시하고 구조만 보여준다
   const view = { ...store, sensor: 'online' as const, parking: { ...store.parking, slots: list } };
   const s = sel ? list.find((x) => x.code === sel) ?? null : null;
 
-  const start = () => { setDraft(store.parking.slots.map((x) => ({ ...x }))); setSel(store.parking.slots[0]?.code ?? null); setEdit(true); };
+  useEffect(() => {
+    setEditing(edit);
+    return () => setEditing(false);
+  }, [edit, setEditing]);
+
+  useEffect(() => {
+    if (!edit) return;
+    const h = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, [edit]);
+
+  const start = () => {
+    setDraft(store.parking.slots.map((x) => ({ ...x })));
+    setSel(store.parking.slots[0]?.code ?? null);
+    setEdit(true);
+  };
   const cancel = () => { setEdit(false); setDraft(null); setSel(null); };
-  const save = () => {
-    if (!draft) return;
-    setSlots(store.id, draft, { who: '최영호', msg: `주차장 배치도 수정 · ${draft.length}면`, tone: 'brand' });
+
+  const save = async () => {
+    if (!draft || saving) return;
+    setSaving(true);
+    const ok = await setSlots(store.id, draft, {
+      who: '최영호', msg: `주차장 배치도 수정 · ${draft.length}면`, tone: 'brand',
+    });
+    setSaving(false);
+    if (!ok) return;   // 실패하면 편집 모드를 유지한다
+
     pushToast({ title: '주차장 배치도를 저장했어요', desc: `주차면 ${draft.length}면`, tone: 'ok', icon: 'check' });
     cancel();
   };
@@ -613,28 +717,46 @@ function SetParking({ store }: { store: PartnerStore }) {
     if (taken(nr, nc, s.code)) return;
     patch(s.code, { row: nr, col: nc });
   };
+  const canMove = (dr: number, dc: number) => {
+    if (!s) return false;
+    const nr = s.row + dr;
+    const nc = s.col + dc;
+    if (nr < 0 || nr > 7 || nc < 0 || nc > 9) return false;
+    return !taken(nr, nc, s.code);
+  };
+
   const add = () => {
     if (!draft) return;
     for (let r = 0; r < 8; r++) {
       for (let c = 0; c < 10; c++) {
         if (!taken(r, c, null)) {
-          const nums = draft.map((x) => parseInt(x.code.replace(/\D/g, ''), 10) || 0);
-          const code = 'A' + (Math.max(0, ...nums) + 1);
+          const code = nextSlotCode(draft);
+          // 같은 줄에 이미 있는 면의 구역을 따라간다 (P7~P10 줄에 추가하면 B 구역)
+          const zone = draft.find((x) => x.row === r)?.zone ?? draft[0]?.zone ?? 'A';
           setDraft((d) => (d ? [...d, {
-            code, row: r, col: c, zone: 'A', autoStatus: 'available',
-            manualStatus: null, manualUntil: null, manualBy: null, type: null, nearGate: false, confidence: 0.98,
+            id: code,
+            code, row: r, col: c, zone,
+            // ★ 센서가 아직 안 붙었으므로 unknown 이다. available 로 두면
+            //   손님 앱이 없는 자리를 있다고 말한다 (규칙 3).
+            autoStatus: 'unknown' as const,
+            manualStatus: null, manualUntil: null, manualBy: null,
+            type: null, nearGate: false, confidence: 0,
           }] : d));
           setSel(code);
           return;
         }
       }
     }
+    pushToast({ title: '더 놓을 자리가 없어요', desc: '기존 주차면을 옮긴 뒤 추가해 주세요', tone: 'warn', icon: 'alert' });
   };
+
   const del = () => {
     if (!s) return;
     setDraft((d) => (d ? d.filter((x) => x.code !== s.code) : d));
     setSel(null);
   };
+
+  const pending = list.filter((x) => x.autoStatus === 'unknown').length;
 
   return (
     <div className="grid grid-cols-3 gap-5">
@@ -646,8 +768,10 @@ function SetParking({ store }: { store: PartnerStore }) {
           </div>
           {edit ? (
             <div className="flex gap-2">
-              <Button variant="ghost" size="sm" onClick={cancel}>취소</Button>
-              <Button variant="primary" size="sm" icon="check" onClick={save}>배치 저장</Button>
+              <Button variant="ghost" size="sm" onClick={cancel} disabled={saving}>취소</Button>
+              <Button variant="primary" size="sm" icon="check" onClick={save} disabled={saving}>
+                {saving ? '저장하는 중…' : '배치 저장'}
+              </Button>
             </div>
           ) : (
             <Button variant="outline" size="sm" icon="pencil" onClick={start}>배치도 편집</Button>
@@ -658,8 +782,8 @@ function SetParking({ store }: { store: PartnerStore }) {
           <div className="mb-4 rounded-xl bg-brand-50 border border-brand-200 px-4 py-3 flex items-start gap-2.5">
             <Icon n="question" s={16} cls="text-brand-600 shrink-0 mt-px" />
             <div className="text-[12px] font-medium text-brand-700 leading-relaxed">
-              주차면 하나가 곧 <b>센서 한 개</b>입니다. 배치도에서 지운 주차면의 센서는 감지 대상에서 제외되고,
-              추가한 주차면은 <b>센서 등록 대기</b> 상태가 됩니다.
+              주차면 하나가 곧 <b>센서 한 개</b>입니다. 주차면 번호는 센서 쪽 설정과 <b>똑같아야</b> 하고,
+              배치도에서 지운 주차면은 감지 대상에서 제외됩니다. 편집하는 동안에는 <b>실시간 갱신이 멈춥니다.</b>
             </div>
           </div>
         )}
@@ -680,12 +804,19 @@ function SetParking({ store }: { store: PartnerStore }) {
             </div>
 
             <div className="text-[11.5px] font-extrabold text-ink-500 mb-2">위치 이동</div>
-            <div className="grid grid-cols-3 gap-1.5 w-[148px] mx-auto mb-5">
-              <span /><Button variant="outline" size="sm" onClick={() => move(-1, 0)}>↑</Button><span />
-              <Button variant="outline" size="sm" onClick={() => move(0, -1)}>←</Button>
+            <div className="grid grid-cols-3 gap-1.5 w-[148px] mx-auto mb-2">
+              <span />
+              <Button variant="outline" size="sm" disabled={!canMove(-1, 0)} onClick={() => move(-1, 0)}>↑</Button>
+              <span />
+              <Button variant="outline" size="sm" disabled={!canMove(0, -1)} onClick={() => move(0, -1)}>←</Button>
               <div className="h-9 rounded-xl bg-ink-100 grid place-items-center text-[10.5px] font-extrabold text-ink-400">이동</div>
-              <Button variant="outline" size="sm" onClick={() => move(0, 1)}>→</Button>
-              <span /><Button variant="outline" size="sm" onClick={() => move(1, 0)}>↓</Button><span />
+              <Button variant="outline" size="sm" disabled={!canMove(0, 1)} onClick={() => move(0, 1)}>→</Button>
+              <span />
+              <Button variant="outline" size="sm" disabled={!canMove(1, 0)} onClick={() => move(1, 0)}>↓</Button>
+              <span />
+            </div>
+            <div className="text-[11px] font-medium text-ink-500 text-center mb-5 leading-relaxed">
+              다른 주차면이 있는 칸으로는 옮길 수 없어요.
             </div>
 
             <div className="text-[11.5px] font-extrabold text-ink-500 mb-2">주차면 종류</div>
@@ -734,11 +865,12 @@ function SetParking({ store }: { store: PartnerStore }) {
             </span>
             <div className="text-[14px] font-extrabold text-ink-900">센서 등록 현황</div>
           </div>
-          <StatRow label="정상 감지" value={list.length} sub="개" tone="text-ok-500" />
-          <StatRow label="등록 대기" value={0} sub="개" />
+          <StatRow label="정상 감지" value={list.length - pending} sub="개" tone="text-ok-500" />
+          <StatRow label="등록 대기" value={pending} sub="개" />
           <StatRow label="게이트웨이" value={1} sub="대" />
           <div className="mt-4 text-[11.5px] font-medium text-ink-500 leading-relaxed">
-            주차면 감지는 바닥에 설치한 지자기 센서가 담당합니다. 카메라 설정 항목은 없습니다.
+            주차면 감지는 바닥에 설치한 지자기 센서가 담당합니다. 새로 추가한 주차면은
+            센서가 같은 번호로 신호를 보내기 전까지 <b>등록 대기</b>로 표시됩니다.
           </div>
         </Card>
       </div>
@@ -748,34 +880,153 @@ function SetParking({ store }: { store: PartnerStore }) {
 
 /* ── 이용 통계 ─────────────────────────────────────────── */
 
-const heatTone = (v: number) =>
-  v >= 90 ? 'bg-busy-500 text-white'
+/**
+ * ★ 목업(STAT_*)이 아니라 GET /api/admin/stats 를 읽는다.
+ *   폴링하지 않는다 — lib/store.tsx 의 3초 폴링에 얹으면 30일치 SensorLog 를
+ *   3초마다 스캔하게 된다. 화면 진입 시 1회 + 수동 새로고침이면 충분하다.
+ *
+ * ★ 값이 null 인 지표는 숫자를 지어내지 않고 '데이터 수집 중' 으로 표시한다.
+ *   (평균 이용시간 · 예약 경로 · 좌석 vs 주차 — 스키마에 이력이 없다)
+ *   규칙 3 — 불확실을 가능으로 세지 않는다.
+ */
+
+type Stats = {
+  range: { days: number; from: string; to: string };
+  coverage: { totalSlots: number; reportingSlots: number; sensorSamples: number; thin: boolean };
+  reservation: {
+    total: number; visited: number; noshow: number; canceled: number;
+    fulfillRate: number | null; noshowRate: number | null;
+    byWeekday: { d: string; res: number; visit: number; noshow: number }[];
+    byParty: [string, number][];
+    busiestDay: { d: string; res: number } | null;
+    quietDay: { d: string; res: number } | null;
+    worstNoshow: { label: string; count: number } | null;
+    avgDurationMin: number | null;
+    bySource: null;
+  };
+  parking: {
+    avgOccupancy: number | null; avgParkMin: number | null;
+    turnover: number | null; fullCount: number | null; sessions: number;
+    byHour: { h: number; park: number; samples: number }[];
+    heatHours: number[];
+    heatmap: { d: string; v: (number | null)[]; samples: number[] }[];
+    peak: { h: number; park: number } | null;
+    quiet: { h: number; park: number } | null;
+    seatVsPark: null;
+  };
+  insights: { tone: 'ok' | 'warn' | 'brand'; title: string; body: string }[];
+  generatedAt: string;
+};
+
+const heatTone = (v: number | null) =>
+  v === null ? 'bg-ink-100 text-ink-400'
+    : v >= 90 ? 'bg-busy-500 text-white'
     : v >= 75 ? 'bg-busy-300 text-busy-600'
     : v >= 55 ? 'bg-warn-300 text-warn-600'
     : v >= 35 ? 'bg-ok-200 text-ok-600'
     : 'bg-ok-100 text-ok-600';
 
+/** 아직 계산할 수 없는 지표 자리 — 빈칸으로 두지 않고 이유를 적는다 */
+const Pending = ({ title, why }: { title: string; why: string }) => (
+  <Card className="p-6">
+    <div className="text-[14px] font-extrabold text-ink-900 mb-3">{title}</div>
+    <div className="rounded-xl border border-dashed border-ink-300 bg-ink-50 p-4">
+      <div className="flex items-center gap-1.5 text-[12.5px] font-extrabold text-ink-600 mb-1">
+        <Icon n="clock" s={14} />
+        데이터 수집 중
+      </div>
+      <div className="text-[11.5px] font-medium text-ink-500 leading-relaxed">{why}</div>
+    </div>
+  </Card>
+);
+
 function SetStats({ store }: { store: PartnerStore }) {
   const [range, setRange] = useState<'7' | '30' | '90'>('30');
+  const [data, setData] = useState<Stats | null>(null);
+  const [phase, setPhase] = useState<'loading' | 'ok' | 'error'>('loading');
 
-  const maxRes = Math.max(...STAT_DOW.map((x) => x.res));
-  const totalRes = STAT_DOW.reduce((a, b) => a + b.res, 0);
-  const totalVisit = STAT_DOW.reduce((a, b) => a + b.visit, 0);
-  const totalNoshow = STAT_DOW.reduce((a, b) => a + b.noshow, 0);
-  const peak = STAT_HOUR.reduce((a, b) => (b.park > a.park ? b : a));
-  const quiet = STAT_HOUR.reduce((a, b) => (b.park < a.park ? b : a));
+  const load = useCallback(async () => {
+    setPhase('loading');
+    try {
+      const r = await fetch(`/api/admin/stats?store=${store.id}&days=${range}`, { cache: 'no-store' });
+      if (!r.ok) throw new Error(String(r.status));
+      setData(await r.json());
+      setPhase('ok');
+    } catch {
+      setPhase('error');
+    }
+  }, [store.id, range]);
 
-  return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div className="text-[12.5px] font-bold text-ink-500">
-          집계 기준 · 최근 {range}일 <span className="text-ink-400">(2026-07-19 ~ 2026-08-18)</span>
-        </div>
+  useEffect(() => { load(); }, [load]);
+
+  const Head = (
+    <div className="flex items-center justify-between">
+      <div className="text-[12.5px] font-bold text-ink-500">
+        집계 기준 · 최근 {range}일
+        {data && <span className="text-ink-400 tnum"> ({data.range.from} ~ {data.range.to})</span>}
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={load}
+          className="h-8 px-3 rounded-lg border border-ink-200 bg-white text-[12px] font-extrabold text-ink-600 hover:border-brand-300 inline-flex items-center gap-1.5"
+        >
+          <Icon n="refresh" s={13} />
+          새로고침
+        </button>
         <Segmented
           size="sm" value={range} onChange={setRange}
           options={[{ value: '7', label: '7일' }, { value: '30', label: '30일' }, { value: '90', label: '90일' }]}
         />
       </div>
+    </div>
+  );
+
+  if (phase === 'loading' && !data) {
+    return (
+      <div className="space-y-5">
+        {Head}
+        <div className="grid grid-cols-4 gap-4">
+          {[0, 1, 2, 3].map((i) => (
+            <Card key={i} className="p-5 h-[132px] animate-pulse bg-ink-100 border-ink-200" />
+          ))}
+        </div>
+        <Card className="p-6 h-[280px] animate-pulse bg-ink-100 border-ink-200" />
+      </div>
+    );
+  }
+
+  if (phase === 'error' || !data) {
+    return (
+      <div className="space-y-5">
+        {Head}
+        <Card className="p-10 text-center">
+          <div className="text-[14px] font-extrabold text-ink-900 mb-1">통계를 불러오지 못했어요</div>
+          <div className="text-[12px] font-bold text-ink-500 mb-4">
+            네트워크 상태를 확인한 뒤 다시 시도해 주세요.
+          </div>
+          <Button onClick={load}>다시 시도</Button>
+        </Card>
+      </div>
+    );
+  }
+
+  const { reservation: rs, parking: pk, coverage: cv } = data;
+  const maxRes = Math.max(1, ...rs.byWeekday.map((x) => x.res));
+  const noData = rs.total === 0 && cv.sensorSamples === 0;
+
+  return (
+    <div className="space-y-5">
+      {Head}
+
+      {noData && (
+        <Card className="p-6 border-warn-200 bg-warn-50">
+          <div className="text-[13.5px] font-extrabold text-warn-600 mb-1">아직 집계할 기록이 없어요</div>
+          <div className="text-[12px] font-medium text-ink-600 leading-relaxed">
+            최근 {range}일 안에 예약과 센서 기록이 모두 없습니다. 센서 게이트웨이를 켜 두면
+            시간이 지나면서 시간대별 · 요일별 패턴이 채워집니다.
+          </div>
+        </Card>
+      )}
 
       {/* 1. 예약 이용현황 */}
       <div>
@@ -785,31 +1036,55 @@ function SetStats({ store }: { store: PartnerStore }) {
         </div>
 
         <div className="grid grid-cols-4 gap-4 mb-4">
-          <KPI label="총 예약" value={totalRes} unit="건" icon="calendar" tone="brand" sub="지난 기간 대비 +12%" />
-          <KPI label="방문 완료" value={totalVisit} unit="건" icon="check" tone="ok" sub={`이행률 ${Math.round((totalVisit / totalRes) * 100)}%`} />
-          <KPI label="미방문" value={totalNoshow} unit="건" icon="alert" tone="busy" sub={`미방문율 ${((totalNoshow / totalRes) * 100).toFixed(1)}%`} />
-          <KPI label="평균 이용시간" value="52" unit="분" icon="clock" tone="warn" sub="4인석 기준 61분" />
+          <KPI
+            label="총 예약" value={rs.total} unit="건" icon="calendar" tone="brand"
+            sub={rs.canceled > 0 ? `취소 ${rs.canceled}건 포함` : undefined}
+          />
+          <KPI
+            label="방문 완료" value={rs.visited} unit="건" icon="check" tone="ok"
+            sub={rs.fulfillRate !== null ? `이행률 ${rs.fulfillRate}%` : '집계할 예약이 없어요'}
+          />
+          <KPI
+            label="미방문" value={rs.noshow} unit="건" icon="alert" tone="busy"
+            sub={rs.noshowRate !== null ? `미방문율 ${rs.noshowRate}%` : '집계할 예약이 없어요'}
+          />
+          <KPI label="평균 이용시간" value="—" icon="clock" tone="unk" sub="데이터 수집 중" />
         </div>
 
         <div className="grid grid-cols-3 gap-5">
           <Card className="col-span-2 p-6">
             <div className="text-[14px] font-extrabold text-ink-900">요일별 예약</div>
             <div className="text-[11.5px] font-bold text-ink-500 mb-4">
-              금·토에 예약이 몰립니다. 이 두 요일의 주차 안내를 먼저 준비하세요.
+              {rs.busiestDay
+                ? <>{rs.busiestDay.d}요일에 가장 많습니다. 이 요일의 주차 안내를 먼저 준비하세요.</>
+                : <>아직 요일 패턴을 판단할 만큼 예약이 쌓이지 않았어요.</>}
             </div>
-            <StatBar items={STAT_DOW as unknown as Record<string, string | number>[]} valueKey="res" max={maxRes} />
+            <StatBar
+              items={rs.byWeekday as unknown as Record<string, string | number>[]}
+              valueKey="res" max={maxRes}
+            />
             <div className="mt-4 pt-4 border-t border-ink-200 grid grid-cols-3 gap-4">
               <div>
                 <div className="text-[11.5px] font-extrabold text-ink-500 mb-1">가장 붐비는 요일</div>
-                <div className="text-[15px] font-extrabold text-ink-900">토요일 <span className="text-[12px] text-ink-500 tnum">78건</span></div>
+                <div className="text-[15px] font-extrabold text-ink-900">
+                  {rs.busiestDay
+                    ? <>{rs.busiestDay.d}요일 <span className="text-[12px] text-ink-500 tnum">{rs.busiestDay.res}건</span></>
+                    : <span className="text-ink-400">—</span>}
+                </div>
               </div>
               <div>
                 <div className="text-[11.5px] font-extrabold text-ink-500 mb-1">가장 한가한 요일</div>
-                <div className="text-[15px] font-extrabold text-ink-900">월요일 <span className="text-[12px] text-ink-500 tnum">31건</span></div>
+                <div className="text-[15px] font-extrabold text-ink-900">
+                  {rs.quietDay
+                    ? <>{rs.quietDay.d}요일 <span className="text-[12px] text-ink-500 tnum">{rs.quietDay.res}건</span></>
+                    : <span className="text-ink-400">—</span>}
+                </div>
               </div>
               <div>
                 <div className="text-[11.5px] font-extrabold text-ink-500 mb-1">미방문이 잦은 시간</div>
-                <div className="text-[15px] font-extrabold text-busy-500">금 19:00</div>
+                <div className="text-[15px] font-extrabold text-busy-500">
+                  {rs.worstNoshow ? rs.worstNoshow.label : <span className="text-ink-400">—</span>}
+                </div>
               </div>
             </div>
           </Card>
@@ -817,22 +1092,26 @@ function SetStats({ store }: { store: PartnerStore }) {
           <div className="space-y-5">
             <Card className="p-6">
               <div className="text-[14px] font-extrabold text-ink-900 mb-3">예약 인원 분포</div>
-              {STAT_PARTY.map(([l, v]) => (
-                <div key={l} className="mb-3 last:mb-0">
-                  <Gauge used={v} total={100} tone="brand" label={l} />
-                </div>
-              ))}
-              <div className="mt-4 pt-4 border-t border-ink-200 text-[11.5px] font-medium text-ink-600 leading-relaxed">
-                <b>1~2인 예약이 42%</b>입니다. 2인석을 늘리면 회전이 빨라질 수 있어요.
-              </div>
+              {rs.total === 0 ? (
+                <div className="py-6 text-center text-[12px] font-bold text-ink-400">집계할 예약이 없어요</div>
+              ) : (
+                <>
+                  {rs.byParty.map(([l, v]) => (
+                    <div key={l} className="mb-3 last:mb-0">
+                      <Gauge used={v} total={100} tone="brand" label={l} />
+                    </div>
+                  ))}
+                  <div className="mt-4 pt-4 border-t border-ink-200 text-[11.5px] font-medium text-ink-600 leading-relaxed">
+                    <b>1~2인 예약이 {rs.byParty[0]?.[1] ?? 0}%</b>입니다. 비중이 높다면 2인석을 늘려 회전을 높일 수 있어요.
+                  </div>
+                </>
+              )}
             </Card>
 
-            <Card className="p-6">
-              <div className="text-[14px] font-extrabold text-ink-900 mb-2">예약 경로</div>
-              <StatRow label="SPOT 앱 예약" value="264" sub="건" tone="text-brand-600" />
-              <StatRow label="전화 예약" value="52" sub="건" />
-              <StatRow label="워크인 (예약 없음)" value="32" sub="건" />
-            </Card>
+            <Pending
+              title="예약 경로"
+              why="예약이 앱 · 전화 · 워크인 중 어디서 들어왔는지 저장하고 있지 않습니다. 예약 데이터에 경로 항목이 추가되면 이 자리에 채워집니다."
+            />
           </div>
         </div>
       </div>
@@ -842,104 +1121,171 @@ function SetStats({ store }: { store: PartnerStore }) {
         <div className="flex items-center gap-2 mb-3">
           <span className="w-7 h-7 rounded-lg bg-ok-50 text-ok-500 grid place-items-center"><Icon n="sensor" s={16} /></span>
           <div className="text-[15px] font-extrabold text-ink-900">센서 기반 혼잡도 · 이용패턴</div>
-          <span className="inline-flex items-center gap-1 h-6 px-2 rounded-full bg-ok-50 border border-ok-200 text-[11px] font-extrabold text-ok-600">
+          <span className="inline-flex items-center gap-1 h-6 px-2 rounded-full bg-ok-50 border border-ok-200 text-[11px] font-extrabold text-ok-600 tnum">
             <Icon n="sensor" s={12} />
-            주차면 센서 {store.parking.slots.length}개 집계
+            주차면 {cv.totalSlots}면 중 {cv.reportingSlots}면 집계
           </span>
         </div>
 
-        <div className="grid grid-cols-4 gap-4 mb-4">
-          <KPI label="평균 주차 점유율" value="61" unit="%" icon="parkingP" tone="warn" sub="지난 기간 대비 +6%p" />
-          <KPI label="평균 주차 시간" value="47" unit="분" icon="clock" tone="brand" sub="식사시간 52분과 유사" />
-          <KPI label="일 평균 회전" value="3.2" unit="회" icon="refresh" tone="ok" sub="주차면 1면 기준" />
-          <KPI label="만차 발생" value="14" unit="회" icon="alert" tone="busy" sub={`주로 ${peak.h}시대`} />
-        </div>
-
-        <div className="grid grid-cols-3 gap-5">
-          <Card className="col-span-2 p-6">
-            <div className="text-[14px] font-extrabold text-ink-900 mb-1">시간대별 주차 점유율</div>
-            <div className="text-[11.5px] font-bold text-ink-500 mb-4">
-              {peak.h}시에 <b className="text-busy-500">{peak.park}%</b>로 가장 붐비고, {quiet.h}시에 <b className="text-ok-500">{quiet.park}%</b>로 가장 여유롭습니다.
+        {cv.sensorSamples === 0 ? (
+          <Card className="p-8 text-center">
+            <div className="text-[13.5px] font-extrabold text-ink-900 mb-1">센서 기록이 아직 없어요</div>
+            <div className="text-[12px] font-medium text-ink-500 leading-relaxed">
+              최근 {range}일 안에 도착한 센서 데이터가 없습니다. 게이트웨이가 켜져 있는지 확인해 주세요.
             </div>
-            <StatBar items={STAT_HOUR as unknown as Record<string, string | number>[]} valueKey="park" max={100} tone="bg-warn-400" unit="%" />
-
-            <div className="mt-5 pt-5 border-t border-ink-200">
-              <div className="text-[13px] font-extrabold text-ink-900 mb-3">요일 × 시간대 혼잡도</div>
-              <div className="overflow-x-auto thin-sb">
-                <div style={{ minWidth: 520 }}>
-                  <div className="flex gap-1 mb-1 pl-9">
-                    {STAT_HOUR.map((h) => (
-                      <div key={h.h} className="grow text-center text-[10px] font-extrabold text-ink-400 tnum">{h.h}</div>
-                    ))}
+          </Card>
+        ) : (
+          <>
+            {/* ★ 몇 면이 보고했는지 숨기지 않는다. 1면 기준 수치를 전체인 척하면 안 된다 */}
+            {(cv.thin || cv.reportingSlots < cv.totalSlots) && (
+              <Card className="p-4 mb-4 border-warn-200 bg-warn-50">
+                <div className="flex items-start gap-2">
+                  <span className="text-warn-500 mt-0.5 shrink-0"><Icon n="alert" s={15} /></span>
+                  <div className="text-[11.5px] font-medium text-ink-600 leading-relaxed">
+                    {cv.reportingSlots < cv.totalSlots && (
+                      <>
+                        전체 {cv.totalSlots}면 중 <b className="tnum">{cv.reportingSlots}면</b>만 센서가 보고하고 있습니다.
+                        아래 점유율은 <b>보고 중인 주차면 기준</b>이며 주차장 전체 값이 아닙니다.{' '}
+                      </>
+                    )}
+                    {cv.thin && (
+                      <>표본이 <b className="tnum">{cv.sensorSamples}건</b>으로 적어 시간대별 수치가 흔들릴 수 있어요.</>
+                    )}
                   </div>
-                  {STAT_HEAT.map((row) => (
-                    <div key={row.d} className="flex gap-1 mb-1 items-center">
-                      <div className="w-8 shrink-0 text-[11px] font-extrabold text-ink-500">{row.d}</div>
-                      {row.v.map((v, i) => (
-                        <div key={i} className={cx('grow h-8 rounded-md grid place-items-center text-[10px] font-extrabold tnum', heatTone(v))}>
-                          {v}
+                </div>
+              </Card>
+            )}
+
+            <div className="grid grid-cols-4 gap-4 mb-4">
+              <KPI
+                label="평균 주차 점유율" value={pk.avgOccupancy ?? '—'}
+                unit={pk.avgOccupancy !== null ? '%' : undefined}
+                icon="parkingP" tone="warn" sub={`보고 ${cv.reportingSlots}면 기준`}
+              />
+              <KPI
+                label="평균 주차 시간" value={pk.avgParkMin ?? '—'}
+                unit={pk.avgParkMin !== null ? '분' : undefined}
+                icon="clock" tone="brand"
+                sub={pk.sessions > 0 ? `주차 ${pk.sessions}회 기준` : '완료된 주차 기록이 없어요'}
+              />
+              <KPI
+                label="일 평균 회전" value={pk.turnover ?? '—'}
+                unit={pk.turnover !== null ? '회' : undefined}
+                icon="refresh" tone="ok" sub="주차면 1면 기준"
+              />
+              <KPI
+                label="만차 발생" value={pk.fullCount ?? '—'}
+                unit={pk.fullCount !== null ? '회' : undefined}
+                icon="alert" tone={pk.fullCount !== null ? 'busy' : 'unk'}
+                sub={pk.fullCount !== null ? '10분 단위 판정' : '전 주차면 센서 필요'}
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-5">
+              <Card className="col-span-2 p-6">
+                <div className="text-[14px] font-extrabold text-ink-900 mb-1">시간대별 주차 점유율</div>
+                <div className="text-[11.5px] font-bold text-ink-500 mb-4">
+                  {pk.peak && pk.quiet && pk.peak.h !== pk.quiet.h ? (
+                    <>
+                      {pk.peak.h}시에 <b className="text-busy-500 tnum">{pk.peak.park}%</b>로 가장 붐비고,{' '}
+                      {pk.quiet.h}시에 <b className="text-ok-500 tnum">{pk.quiet.park}%</b>로 가장 여유롭습니다.
+                    </>
+                  ) : (
+                    <>아직 여러 시간대를 비교할 만큼 기록이 쌓이지 않았어요.</>
+                  )}
+                </div>
+                <StatBar
+                  items={pk.byHour as unknown as Record<string, string | number>[]}
+                  valueKey="park" max={100} tone="bg-warn-400" unit="%"
+                />
+
+                <div className="mt-5 pt-5 border-t border-ink-200">
+                  <div className="text-[13px] font-extrabold text-ink-900 mb-3">요일 × 시간대 혼잡도</div>
+                  <div className="overflow-x-auto thin-sb">
+                    <div style={{ minWidth: Math.max(320, pk.heatHours.length * 38 + 36) }}>
+                      <div className="flex gap-1 mb-1 pl-9">
+                        {pk.heatHours.map((h) => (
+                          <div key={h} className="grow text-center text-[10px] font-extrabold text-ink-400 tnum">{h}</div>
+                        ))}
+                      </div>
+                      {pk.heatmap.map((row) => (
+                        <div key={row.d} className="flex gap-1 mb-1 items-center">
+                          <div className="w-8 shrink-0 text-[11px] font-extrabold text-ink-500">{row.d}</div>
+                          {row.v.map((v, i) => (
+                            <div
+                              key={i}
+                              title={v === null ? '기록 없음' : `${row.d} ${pk.heatHours[i]}시 · ${v}% · 표본 ${row.samples[i]}건`}
+                              className={cx(
+                                'grow h-8 rounded-md grid place-items-center text-[10px] font-extrabold tnum',
+                                heatTone(v),
+                                // 표본이 적은 칸은 흐리게 — 2건짜리 100% 를 진하게 그리면 거짓말이 된다
+                                v !== null && row.samples[i] < 5 && 'opacity-40'
+                              )}
+                            >
+                              {v === null ? '—' : v}
+                            </div>
+                          ))}
                         </div>
                       ))}
                     </div>
-                  ))}
+                  </div>
+                  <div className="flex items-center gap-3 mt-3 flex-wrap">
+                    {([['여유', 'bg-ok-100 text-ok-600'], ['보통', 'bg-ok-200 text-ok-600'], ['혼잡', 'bg-warn-300 text-warn-600'],
+                       ['많이 혼잡', 'bg-busy-300 text-busy-600'], ['만차 임박', 'bg-busy-500 text-white'],
+                       ['기록 없음', 'bg-ink-100 text-ink-400']] as const).map(([l, c]) => (
+                      <span key={l} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-ink-600">
+                        <span className={cx('w-4 h-4 rounded', c)} />
+                        {l}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="mt-2 text-[11px] font-medium text-ink-500">
+                    색만으로 구분하지 않도록 각 칸에 점유율 수치를 함께 표시합니다. 흐린 칸은 표본이 5건 미만입니다.
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-3 mt-3 flex-wrap">
-                {([['여유', 'bg-ok-100 text-ok-600'], ['보통', 'bg-ok-200 text-ok-600'], ['혼잡', 'bg-warn-300 text-warn-600'],
-                   ['많이 혼잡', 'bg-busy-300 text-busy-600'], ['만차 임박', 'bg-busy-500 text-white']] as const).map(([l, c]) => (
-                  <span key={l} className="inline-flex items-center gap-1.5 text-[11px] font-bold text-ink-600">
-                    <span className={cx('w-4 h-4 rounded', c)} />
-                    {l}
-                  </span>
-                ))}
-              </div>
-              <div className="mt-2 text-[11px] font-medium text-ink-500">
-                색만으로 구분하지 않도록 각 칸에 점유율 수치를 함께 표시합니다.
+              </Card>
+
+              <div className="space-y-5">
+                <Pending
+                  title="좌석 vs 주차"
+                  why="주차는 센서 기록이 쌓이지만 좌석은 현재 상태만 저장하고 있어 과거 시간대를 비교할 수 없습니다. 테이블 입 · 퇴장 기록이 추가되면 이 자리에 채워집니다."
+                />
+
+                <Card className="p-6">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Icon n="sparkle" s={17} cls="text-brand-600" />
+                    <div className="text-[14px] font-extrabold text-ink-900">읽어낸 패턴</div>
+                  </div>
+                  {data.insights.length === 0 ? (
+                    <div className="py-6 text-center text-[12px] font-bold text-ink-400">
+                      패턴을 읽어낼 만큼 기록이 쌓이지 않았어요
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {data.insights.map((it) => (
+                        <div
+                          key={it.title}
+                          className={cx('rounded-xl border p-3.5',
+                            it.tone === 'warn' ? 'bg-warn-50 border-warn-200'
+                              : it.tone === 'ok' ? 'bg-ok-50 border-ok-200'
+                              : 'bg-brand-50 border-brand-200')}
+                        >
+                          <div className={cx('text-[12.5px] font-extrabold mb-1',
+                            it.tone === 'warn' ? 'text-warn-600'
+                              : it.tone === 'ok' ? 'text-ok-600'
+                              : 'text-brand-700')}>
+                            {it.title}
+                          </div>
+                          <div className="text-[11.5px] font-medium text-ink-600 leading-relaxed">{it.body}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
               </div>
             </div>
-          </Card>
-
-          <div className="space-y-5">
-            <Card className="p-6">
-              <div className="text-[14px] font-extrabold text-ink-900 mb-3">좌석 vs 주차</div>
-              <div className="text-[11.5px] font-bold text-ink-500 mb-4">두 값이 벌어지는 시간대에는 주차가 병목입니다.</div>
-              {STAT_HOUR.filter((h) => [12, 13, 18, 19].includes(h.h)).map((h) => (
-                <div key={h.h} className="mb-4 last:mb-0">
-                  <div className="text-[12px] font-extrabold text-ink-800 mb-1.5 tnum">{h.h}:00</div>
-                  <Gauge used={h.seat} total={100} tone="brand" label="좌석 이용률" />
-                  <div className="h-1.5" />
-                  <Gauge used={h.park} total={100} tone={h.park >= 85 ? 'busy' : 'warn'} label="주차 점유율" />
-                </div>
-              ))}
-            </Card>
-
-            <Card className="p-6">
-              <div className="flex items-center gap-2 mb-3">
-                <Icon n="sparkle" s={17} cls="text-brand-600" />
-                <div className="text-[14px] font-extrabold text-ink-900">읽어낸 패턴</div>
-              </div>
-              <div className="space-y-3">
-                {([
-                  ['주차가 좌석보다 먼저 찹니다', '19시에는 주차 90% · 좌석 88%. 예약 손님에게 근처 공영주차장을 미리 안내하면 미방문이 줄어듭니다.', 'warn'],
-                  ['15~16시는 확실한 유휴 시간', '주차 26% · 좌석 21%. 이 시간대 할인으로 회전을 만들 수 있습니다.', 'ok'],
-                  ['평균 주차 47분 < 식사 52분', '식사가 끝나기 전에 차를 빼는 손님이 있습니다. 주차 무료 시간 안내가 부족할 수 있어요.', 'brand'],
-                ] as const).map(([t, d, tone]) => (
-                  <div
-                    key={t}
-                    className={cx('rounded-xl border p-3.5',
-                      tone === 'warn' ? 'bg-warn-50 border-warn-200' : tone === 'ok' ? 'bg-ok-50 border-ok-200' : 'bg-brand-50 border-brand-200')}
-                  >
-                    <div className={cx('text-[12.5px] font-extrabold mb-1',
-                      tone === 'warn' ? 'text-warn-600' : tone === 'ok' ? 'text-ok-600' : 'text-brand-700')}>
-                      {t}
-                    </div>
-                    <div className="text-[11.5px] font-medium text-ink-600 leading-relaxed">{d}</div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          </div>
-        </div>
+          </>
+        )}
       </div>
     </div>
   );

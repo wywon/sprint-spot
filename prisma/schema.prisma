@@ -218,6 +218,8 @@ model Reservation {
   parkingAlert Boolean @default(false)
   exited       Boolean @default(false)
   receipt      Boolean @default(false) // 영수증 올렸는가 → 리뷰쓰기 활성 조건
+  receiptPath  String?                 // Storage 경로. 예: "cmxxx.../1725900000000.jpg"
+  receiptAt    DateTime?               // 올린 시각 (KST 보정된 값)
   reviewed     Boolean @default(false)
 
   createdAt DateTime @default(now())
@@ -225,6 +227,7 @@ model Reservation {
   store  Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
   table  StoreTable? @relation(fields: [tableId], references: [id])
   review Review?
+
 
   @@unique([storeId, date, time, phone]) // 같은 사람이 같은 시간에 두 번 못 잡는다
   @@index([phone]) // GET /api/reservations?phone=

@@ -165,7 +165,7 @@ const lotRows: Prisma.PublicLotCreateManyInput[] = PUBLIC_LOTS.map((l) => ({
   addr: l.addr,
   type: l.type,
   total: l.total,
-  available: l.available,
+  available: l.available ?? 0,
   fee: l.fee,
   dayMax: l.dayMax,
   hours: l.hours,
@@ -280,8 +280,8 @@ const reviewRows: Prisma.ReviewCreateManyInput[] = REVIEWS.map((v) => ({
  * ──────────────────────────────────────────────────────────── */
 
 const logRows: Prisma.ActivityLogCreateManyInput[] = [
-  { id: 'g1', storeId: 's1', at: minutesAgo(1),  who: '센서',   msg: 'B3 상태를 판단하지 못했습니다 (신뢰도 0.42)', tone: 'warn' },
-  { id: 'g2', storeId: 's1', at: minutesAgo(4),  who: '센서',   msg: 'A7 주차 중 → 이용 가능',                    tone: 'ok' },
+  { id: 'g1', storeId: 's1', at: minutesAgo(1),  who: '센서',   msg: 'P9 상태를 판단하지 못했습니다 (신뢰도 0.42)', tone: 'warn' },
+  { id: 'g2', storeId: 's1', at: minutesAgo(4),  who: '센서',   msg: 'P4 주차 중 → 이용 가능',                    tone: 'ok' },
   { id: 'g3', storeId: 's1', at: minutesAgo(12), who: '최영호', msg: 'T06 정리 완료 처리',                        tone: 'brand' },
   { id: 'g4', storeId: 's1', at: minutesAgo(26), who: '시스템', msg: '12:00 예약(노시은) 10분 경과 — 미방문 처리', tone: 'busy' },
   { id: 'g5', storeId: 's3', at: minutesAgo(8),  who: '시스템', msg: '센서 게이트웨이 응답 없음 — 오프라인 전환',  tone: 'off' },
