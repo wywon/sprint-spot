@@ -153,7 +153,19 @@ export interface Reservation {
   time: string;          // '12:30'
   party: number;
   seatType: string;
-  status: 'upcoming' | 'done' | 'canceled';
+  /**
+   * [a7] 승인제로 바뀌면서 두 개가 늘었다.
+   *   pending  확인 중 — 매장이 아직 안 봤다
+   *   rejected 매장이 못 받는다고 했다 (손님이 취소한 canceled 와 다르다)
+   *
+   * ★ 화면에서 '지난 예약'을 res.status !== 'upcoming' 으로 가르면 안 된다.
+   *   pending 이 지난 예약으로 떨어진다. isLiveRes() 를 쓸 것.
+   */
+  status: ResStatus;
+  /** rejected 일 때만 있다. REJECT_REASONS 의 키 */
+  rejectReason?: RejectReasonCode | null;
+  /** 매장이 승인·거절을 누른 시각(ms). 알림을 한 번만 띄우기 위해 쓴다 */
+  decidedAt?: number | null;
   name: string;
   phone: string;
   memo: string;
@@ -163,6 +175,40 @@ export interface Reservation {
   reviewed?: boolean;
 }
 
+/**
+ * 예약 상태.
+ * 진행 중(손님이 아직 기다리는 중)인가를 한 군데서 판단한다.
+ * 화면마다 손으로 비교하면 pending 이 생길 때마다 같은 버그가 다섯 군데에 생긴다.
+ */
+export type ResStatus =
+  | 'pending' | 'upcoming' | 'rejected' | 'done' | 'canceled';
+
+/** 아직 결말이 안 난 예약 = '다가오는 예약' 탭에 남는다 */
+export const isLiveRes = (s: ResStatus) => s === 'pending' || s === 'upcoming';
+
+/**
+ * 그 시간의 자리를 차지하고 있는 상태.
+ * ─────────────────────────────────────────────────────────
+ * [a7] pending 이 여기 들어간다. 먼저 요청한 사람이 자리를 잡는다(B안).
+ *
+ * 이 목록을 서버 두 곳이 똑같이 쓴다.
+ *   POST /api/reservations          — 정원이 찼는지 판정
+ *   GET  /api/stores/[id]/times     — 시간 버튼을 잠글지 판정
+ *
+ * 한쪽만 고치면 "선택은 되는데 누르면 마감"이라는 최악의 경험이 된다.
+ * seated 가 들어 있는 이유 — 착석한 손님이 그 테이블을 쓰고 있다.
+ * rejected·canceled·noshow·done 은 자리를 놓아준다.
+ */
+export const HOLDING_STATUSES = ['pending', 'upcoming', 'seated'] as const;
+
+/**
+ * 거절 사유 코드.
+ * 관리자는 이 중 하나를 고르고, 손님에게는 코드에 대응하는 문구가 나간다.
+ * 문구가 아니라 코드를 저장하는 이유 — 문구는 반드시 바뀐다.
+ * 코드로 두면 표현만 고치면 되고, 통계에서 사유별로 셀 수도 있다.
+ */
+export type RejectReasonCode = 'full' | 'party' | 'closed' | 'break' | 'etc';
+
 /** 관리자 화면의 오늘 예약 */
 export interface AdminReservation {
   id: string;
@@ -170,9 +216,14 @@ export interface AdminReservation {
   name: string;
   party: number;
   phone: string;
-  status: 'upcoming' | 'seated' | 'noshow';
+  /** [a7] pending = 승인 대기. 관리자 홀 운영 맨 위에 모아 보여 준다 */
+  status: 'pending' | 'upcoming' | 'seated' | 'noshow';
   memo: string;
   eta: string;
+  /** 좌석 유형·요청사항을 관리자가 보고 판단해야 승인을 결정할 수 있다 */
+  seatType?: string;
+  date?: string;
+  createdAt?: number;
 }
 
 export interface Review {

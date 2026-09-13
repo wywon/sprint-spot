@@ -103,14 +103,42 @@ export default function ReservePage({ params }: { params: Promise<{ id: string }
 
   const canNext = step === 1 ? !!(party && date && time) : step === 2 ? true : agree;
 
-  const submit = () => {
-    if (!date || !time) return;
-    const rid = addReservation({
-      storeId: store.id, date, time, party, seatType,
-      status: 'upcoming', name: ME.name, phone: ME.phone, memo, parkingAlert: alertOn,
-    });
-    pushToast({ title: '예약이 확정되었어요', desc: `${store.name} · ${fmtDateK(date)} ${time}`, tone: 'ok', icon: 'check' });
-    router.push(`/reserve/${store.id}/done?rid=${rid}`);
+  const [sending, setSending] = useState(false);
+
+  /**
+   * [a7] 승인제로 바뀌면서 여기가 '확정'이 아니라 '요청'이 됐다.
+   *
+   * ★ 서버 응답을 기다린다
+   *   id 를 서버가 만들고, 그 id 로 완료 화면과 QR 이 만들어진다.
+   *   또 서버가 정원을 다시 세므로 먼저 "예약됐어요"를 띄우면 안 된다.
+   *   "예약됐어요" 뒤에 "사실은 마감이었어요"가 최악이다.
+   *
+   * ★ 실패하면 화면을 넘기지 않는다
+   *   실패 사유 토스트는 store 쪽에서 이미 띄운다. 여기 머물러야
+   *   손님이 다른 시간을 바로 고를 수 있다.
+   *
+   * ★ 보내는 동안 버튼을 잠근다
+   *   두 번 누르면 409(DUPLICATE_RESERVATION)가 뜬다. 손님 잘못이 아니다.
+   */
+  const submit = async () => {
+    if (!date || !time || sending) return;
+    setSending(true);
+    try {
+      const rid = await addReservation({
+        storeId: store.id, date, time, party, seatType,
+        status: 'pending', name: ME.name, phone: ME.phone, memo, parkingAlert: alertOn,
+      });
+      if (!rid) return;
+
+      pushToast({
+        title: '예약 요청을 보냈어요',
+        desc: '매장에서 확인하는 대로 알려드릴게요',
+        tone: 'ok', icon: 'check',
+      });
+      router.push(`/reserve/${store.id}/done?rid=${rid}`);
+    } finally {
+      setSending(false);
+    }
   };
 
   return (

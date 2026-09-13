@@ -227,6 +227,33 @@ export function levelOf(
 }
 
 /** 예약 상세에서 쓰는 통합 주차 목록 — 매장 주차장 + 주변 공영주차장 */
+/**
+ * 매장 주차장을 손님에게 한 단어로 요약한다.
+ *
+ * ★ 이 함수를 만든 이유
+ *   화면 다섯 군데가 각자 `ps.available === 0 ? '만차'` 를 손으로 쓰고 있었다.
+ *   그래서 b7 이 levelOf() 를 고쳤는데도 카드·상세·마커는 여전히 만차라고 말했다.
+ *   같은 판단은 한 군데서만 한다. 규칙이 바뀌면 여기만 고친다.
+ *
+ * 'unsure' 가 되는 경우
+ *   · 센서가 죽었다 (offline)            → 아무것도 모른다
+ *   · 주차면이 0개다                      → 아직 배치도를 안 만든 매장
+ *   · 빈자리 0인데 확인 중인 면이 있다     → 만차인지 아닌지 모른다  ★ 여기가 함정
+ *
+ * 빈자리가 3, 확인 중이 7 이면 'ok' 다. 3자리는 확실히 있기 때문이다.
+ * 불확실을 가능으로 세지 않는다는 원칙은 available 쪽에서 이미 지켜진다.
+ */
+export type ParkVerdict = 'ok' | 'full' | 'unsure';
+
+export function parkVerdict(ps: ParkStats): ParkVerdict {
+  if (ps.offline) return 'unsure';
+  if (ps.total === 0) return 'unsure';
+  if ((ps.available ?? 0) === 0) {
+    return (ps.unknown ?? 0) > 0 ? 'unsure' : 'full';
+  }
+  return 'ok';
+}
+
 export interface ParkingOption {
   kind: 'store' | 'lot';
   id: string;
@@ -237,6 +264,8 @@ export interface ParkingOption {
   available: number | null;
   fee: string;
   badge: string;
+  /** 확인 중인 면 수. 공영주차장은 이 개념이 없어 null */
+  unknown: number | null;
   /** [A6] 길안내에 넘길 실제 위경도. 좌표를 모르면 undefined */
   lat?: number;
   lng?: number;
@@ -264,6 +293,7 @@ export function parkingOptions(store: PartnerStore | null, lots: PublicLot[]): P
         walk: 1,
         total: parkStats(store).total,
         available: parkStats(store).available,
+        unknown: parkStats(store).unknown,
         fee: store.parking.fee,
         badge: '매장 주차장',
         lat: realCoord(store.lat, store.lng) ? store.lat : undefined,
@@ -292,6 +322,7 @@ export function parkingOptions(store: PartnerStore | null, lots: PublicLot[]): P
       walk: Math.max(1, Math.round(dist / 67)),
       total: l.total,
       available: l.available,
+      unknown: null,          // 공영주차장은 '확인 중' 이라는 상태가 없다
       fee: l.fee,
       badge: '공영주차장',
       lat: realCoord(l.lat, l.lng) ? l.lat : undefined,

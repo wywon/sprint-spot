@@ -8,7 +8,7 @@ import React, {
 import { createPortal } from 'react-dom';
 import { Icon } from '@/components/ui/Icon';
 import { cx } from '@/lib/format';
-import { levelOf, lotStats, parkStats, seatStats } from '@/lib/status';
+import { levelOf, lotStats, parkStats, parkVerdict, seatStats } from '@/lib/status';
 import type { PartnerStore, PlainStore, PublicLot } from '@/lib/types';
 
 /**
@@ -392,10 +392,20 @@ export const PartnerMarker = ({
 
   /* 마커가 말해야 하는 것은 "가도 되나"뿐이다.
      자리가 있으면 이름만 보여 주고, 없을 때만 이유를 붙인다.
-     센서가 꺼져 있는 경우(offline)는 붙이지 않는다. 만차라는 뜻이 아니고,
-     지도에서 설명하기엔 긴 이야기라 마커를 누른 뒤 시트에서 다룬다. */
-  const seatFull = ss.available === 0;
-  const parkFull = !ps.offline && (ps.available ?? 0) === 0;
+
+     ★ '모른다'를 '없다'로 바꾸지 않는다
+       available === 0 만 보면 안 된다. 센서는 살아 있는데 10면이 전부 unknown 이면
+       available 도 0 이 되는데, 그건 만차가 아니라 확인 불가다.
+       그때 관리자 배치도는 「확인 중」을 그리는데 손님 마커만 「주차 만차」가 되어
+       두 화면이 어긋난다. b7 이 levelOf() 에서 고친 것과 같은 문제다.
+       재현 — node scripts/fake-sensor.mjs --unknown
+       센서 꺼짐(offline)도 만차가 아니다. 지도에서 설명하기엔 긴 이야기라
+       마커에는 아무 말도 안 붙이고, 마커를 누른 뒤 시트에서 다룬다.
+
+     ★ 테이블이나 주차면이 0개인 매장도 걸러야 한다
+       total 0 이면 available 도 0 이라 '만석'이 뜬다. 아직 배치도를 안 만든 매장이다. */
+  const seatFull = ss.total > 0 && ss.available === 0;
+  const parkFull = parkVerdict(ps) === 'full';
   const warn = seatFull && parkFull ? '만석 · 만차' : seatFull ? '만석' : parkFull ? '주차 만차' : null;
 
   return (

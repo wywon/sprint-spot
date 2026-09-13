@@ -6,7 +6,9 @@ import { Icon } from '@/components/ui/Icon';
 import { Badge, Segmented, Empty, Button } from '@/components/ui/primitives';
 import { cx, fmtDateK } from '@/lib/format';
 import { useApp } from '@/lib/store';
+import { isLiveRes } from '@/lib/types';
 import type { Reservation } from '@/lib/types';
+import { rejectReasonOf } from '@/lib/tokens';
 
 /**
  * 예약 탭 — 다가오는 예약 / 지난 예약
@@ -19,8 +21,10 @@ export default function ReservationsPage() {
   const { reservations, getStore } = useApp();
   const [tab, setTab] = useState<'upcoming' | 'done'>('upcoming');
 
+  /* [a7] isLiveRes 로 가른다. status !== 'upcoming' 으로 가르면
+     승인 대기 중(pending)인 예약이 '지난 예약'으로 떨어진다. */
   const list = reservations.filter((r) =>
-    tab === 'upcoming' ? r.status === 'upcoming' : r.status !== 'upcoming'
+    tab === 'upcoming' ? isLiveRes(r.status) : !isLiveRes(r.status)
   );
 
   return (
@@ -73,7 +77,13 @@ function ResCard({
         <div className="grow min-w-0">
           <div className="flex items-start gap-2">
             <span className="grow text-[15px] font-extrabold text-ink-900 truncate">{store?.name ?? '알 수 없는 매장'}</span>
-            {res.status === 'canceled' ? (
+            {/* [a7] 상태가 다섯 가지다. '확인 중'과 '확정'을 같은 배지로 보여 주면
+                손님은 매장이 이미 받아 준 줄 안다 */}
+            {res.status === 'pending' ? (
+              <Badge tone="warn" size="sm" solid>확인 중</Badge>
+            ) : res.status === 'rejected' ? (
+              <Badge tone="busy" size="sm">예약 불가</Badge>
+            ) : res.status === 'canceled' ? (
               <Badge tone="off" size="sm">취소됨</Badge>
             ) : past ? (
               <Badge tone="ink" size="sm">방문 완료</Badge>
@@ -87,6 +97,18 @@ function ResCard({
           <div className="text-[11.5px] font-bold text-ink-400 mt-0.5 tnum">
             {res.party}명 · {res.seatType}
           </div>
+
+          {res.status === 'pending' && (
+            <div className="mt-2 inline-flex items-center gap-1 h-7 px-2.5 rounded-full bg-warn-50 border border-warn-200 text-[11.5px] font-extrabold text-warn-700">
+              <Icon n="clock" s={12} />
+              매장에서 확인하고 있어요
+            </div>
+          )}
+          {res.status === 'rejected' && (
+            <div className="mt-2 text-[11.5px] font-bold text-busy-600 leading-snug">
+              {rejectReasonOf(res.rejectReason).title}
+            </div>
+          )}
 
           {canReview && (
             <div className="mt-2 inline-flex items-center gap-1 h-7 px-2.5 rounded-full bg-brand-50 border border-brand-200 text-[11.5px] font-extrabold text-brand-700">

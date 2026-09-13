@@ -43,11 +43,23 @@ export async function POST(
       )
     }
 
-    // 취소 가능한 상태는 'upcoming' 하나뿐이다.
+    // 취소 가능한 상태는 'pending' 과 'upcoming' 두 가지다.
+    // [a7] pending 도 취소할 수 있어야 한다. 승인을 기다리다 마음이 바뀌는 건 자연스럽고,
+    //      못 막게 하면 관리자가 승인할 때까지 그 자리가 계속 묶인다.
     // 나머지는 각각 다른 이유이므로 메시지를 나눈다.
     if (res.status === 'canceled') {
       return NextResponse.json(
         { error: 'ALREADY_CANCELLED', message: '이미 취소된 예약이에요.' },
+        { status: 409 },
+      )
+    }
+
+    /* [a7] 매장이 거절한 예약은 손님이 취소할 게 없다.
+       그대로 두면 rejected → canceled 로 덮여서 "매장이 못 받았다"는 사실이 사라진다.
+       통계에서도 매장 거절이 손님 취소로 둔갑한다. */
+    if (res.status === 'rejected') {
+      return NextResponse.json(
+        { error: 'ALREADY_REJECTED', message: '매장에서 받기 어렵다고 알려온 예약이에요.' },
         { status: 409 },
       )
     }
@@ -80,10 +92,16 @@ export async function POST(
       )
     }
 
-    // updateMany + status 조건 — 읽은 뒤 쓰기 전 사이에
-    // 자동 미방문 스윕이 상태를 바꿨다면 여기서 0건이 되어 덮어쓰지 않는다
+    /* updateMany + status 조건 — 읽은 뒤 쓰기 전 사이에
+       자동 미방문 스윕이나 관리자 승인이 상태를 바꿨다면
+       여기서 0건이 되어 덮어쓰지 않는다.
+
+       [a7] 'upcoming' 만 적혀 있어서 pending 예약이 취소되지 않았다.
+            앞의 검사는 통과하는데 여기서 0건이 되어 409 가 나갔고,
+            손님 화면은 취소한 것처럼 보였다가 3초 뒤 되돌아왔다.
+            검사와 쓰기의 조건이 다르면 반드시 이런 교착이 생긴다. */
     const updated = await prisma.reservation.updateMany({
-      where: { id, status: 'upcoming' },
+      where: { id, status: { in: ['pending', 'upcoming'] } },
       data: { status: 'canceled' },
     })
 

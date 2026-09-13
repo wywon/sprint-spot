@@ -5,6 +5,7 @@ import { Icon } from '@/components/ui/Icon';
 import { Button, Card, Segmented } from '@/components/ui/primitives';
 import { cx } from '@/lib/format';
 // import { ME } from '@/lib/mock';
+import { isLiveRes } from '@/lib/types';
 import { useApp } from '@/lib/store';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -25,7 +26,8 @@ export default function MyPage() {
   const { reservations, simOn, setSimOn, profile } = useApp();
   const router = useRouter();
 
-  const upcoming = reservations.filter((r) => r.status === 'upcoming').length;
+  /* [a7] 승인 대기도 '다가오는 예약'에 포함한다 */
+  const upcoming = reservations.filter((r) => isLiveRes(r.status)).length;
   const visits = reservations.filter((r) => r.status === 'done').length;
   const written = reservations.filter((r) => r.reviewed).length;
 

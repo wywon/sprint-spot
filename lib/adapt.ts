@@ -14,7 +14,8 @@
  */
 
 import type {
-  ParkingSlot, PartnerStore, SensorState, SlotStatus, StoreTable, TableStatus,
+  AdminReservation, ParkingSlot, PartnerStore, RejectReasonCode, ResStatus,
+  Reservation, SensorState, SlotStatus, StoreTable, TableStatus,
 } from './types';
 
 /* ── API 응답 모양 (README 기준) ───────────────────────────── */
@@ -177,4 +178,114 @@ function adaptSlot(s: ApiSlot, prev?: ParkingSlot): ParkingSlot {
     nearGate: Boolean(s.nearGate),
     confidence: typeof s.confidence === 'number' ? s.confidence : 1,
   };
+}
+
+
+/* ── 관리자 예약 ──────────────────────────────────────────
+   [a7] GET /api/admin/reservations 응답 → AdminReservation
+
+   서버가 eta·전화번호 서식까지 만들어 보내므로 여기서는 모양만 맞춘다.
+   eta 를 클라이언트에서 계산하지 않는 이유 — 노트북 두 대의 시계가 다르면
+   같은 예약이 한쪽은 '8분 후', 다른 쪽은 '11분 후'가 된다. 시연에서 바로 보인다. */
+
+export interface ApiAdminRes {
+  id: string;
+  date: string;
+  time: string;
+  name: string;
+  party: number;
+  phone: string;
+  status: string;
+  memo: string;
+  seatType: string;
+  eta: string;
+  tableId: string | null;
+  rejectReason: string | null;
+  decidedAt: number | null;
+  createdAt: number;
+}
+
+export function adaptAdminRes(a: ApiAdminRes): AdminReservation {
+  return {
+    id: a.id,
+    date: a.date,
+    time: a.time,
+    name: a.name,
+    party: a.party,
+    phone: a.phone,
+    // 화면이 아는 상태만 넘긴다. rejected·canceled 는 목록에서 이미 빠져 있다
+    status: (a.status as AdminReservation['status']) ?? 'pending',
+    memo: a.memo ?? '',
+    seatType: a.seatType ?? '상관없음',
+    eta: a.eta ?? '-',
+    createdAt: a.createdAt,
+  };
+}
+
+
+/* ── 손님 예약 ────────────────────────────────────────────
+   [a7] GET /api/reservations?phone= 응답 → Reservation[]
+
+   서버는 upcoming / past 두 덩어리로 나눠 보낸다. 화면은 한 배열만 읽으므로
+   여기서 합친다. 두 덩어리의 필드가 조금 다르다 — past 에는 QR 코드와
+   예약자 정보가 없다(지난 예약 상세에 QR 을 띄우지 않는다는 규칙 때문이다).
+   비는 자리는 프로필 값으로 채운다. */
+
+export interface ApiResItem {
+  id: string;
+  status: string;
+  storeId: string;
+  storeName?: string;
+  date: string;
+  time: string;
+  people: number;
+  seatType?: string;
+  name?: string;
+  phone?: string;
+  request?: string;
+  receiptUploaded?: boolean;
+  reviewWritten?: boolean;
+  rejectReason?: string | null;
+  decidedAt?: number | null;
+}
+
+export interface ApiResList {
+  upcoming: ApiResItem[];
+  past: ApiResItem[];
+}
+
+export function adaptReservation(
+  a: ApiResItem,
+  me: { name: string; phone: string },
+  prev?: Reservation,
+): Reservation {
+  return {
+    id: a.id,
+    storeId: a.storeId,
+    date: a.date,
+    time: a.time,
+    party: a.people,
+    seatType: a.seatType ?? prev?.seatType ?? '상관없음',
+    status: (a.status as ResStatus) ?? 'pending',
+    name: a.name ?? prev?.name ?? me.name,
+    phone: a.phone ?? prev?.phone ?? me.phone,
+    memo: a.request ?? prev?.memo ?? '',
+    // 서버에 없는 값 — 손님이 화면에서 켜 둔 것이라 이전 값을 살린다
+    parkingAlert: prev?.parkingAlert ?? false,
+    exited: a.status === 'done',
+    receipt: a.receiptUploaded ?? prev?.receipt ?? false,
+    reviewed: a.reviewWritten ?? prev?.reviewed ?? false,
+    rejectReason: (a.rejectReason as RejectReasonCode | null) ?? null,
+    decidedAt: a.decidedAt ?? null,
+  };
+}
+
+export function adaptResList(
+  list: ApiResList,
+  me: { name: string; phone: string },
+  before: Reservation[],
+): Reservation[] {
+  const prev = new Map(before.map((r) => [r.id, r]));
+  return [...(list.upcoming ?? []), ...(list.past ?? [])]
+    .map((a) => adaptReservation(a, me, prev.get(a.id)));
 }

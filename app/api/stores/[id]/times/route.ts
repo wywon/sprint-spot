@@ -1,6 +1,7 @@
 // app/api/stores/[id]/times/route.ts
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { HOLDING_STATUSES } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
@@ -70,9 +71,11 @@ export async function GET(
       (t) => t.seats >= people && t.status !== 'disabled',
     ).length
 
-    // 그 날짜의 살아 있는 예약을 시간별로 센다
+    /* 그 날짜의 '자리를 차지한' 예약을 시간별로 센다.
+       [a7] pending 포함 — POST /api/reservations 와 반드시 같은 목록이어야 한다.
+       한쪽만 고치면 "버튼은 눌리는데 방금 마감됐다"가 나온다. */
     const reservations = await prisma.reservation.findMany({
-      where: { storeId: id, date, status: { in: ['upcoming', 'seated'] } },
+      where: { storeId: id, date, status: { in: [...HOLDING_STATUSES] } },
       select: { time: true },
     })
     const takenAt = new Map<string, number>()

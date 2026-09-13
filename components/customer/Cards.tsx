@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Icon } from '@/components/ui/Icon';
 import { Badge, LiveStamp } from '@/components/ui/primitives';
 import { cx, walkMin } from '@/lib/format';
-import { levelOf, lotStats, parkStats, seatStats } from '@/lib/status';
+import { levelOf, parkVerdict, lotStats, parkStats, seatStats } from '@/lib/status';
 import type { PartnerStore, PlainStore, PublicLot } from '@/lib/types';
 
 /**
@@ -24,6 +24,7 @@ export const StoreCard = ({ store, dist }: { store: PartnerStore; dist?: number 
   const ss = seatStats(store);
   const ps = parkStats(store);
   const lv = levelOf(ps);
+  const pv = parkVerdict(ps);
 
   return (
     <Link
@@ -58,13 +59,13 @@ export const StoreCard = ({ store, dist }: { store: PartnerStore; dist?: number 
             <span
               className={cx(
                 'inline-flex items-center gap-1 h-7 px-2 rounded-lg text-[11.5px] font-extrabold border',
-                ps.offline ? 'bg-off-50 text-off-600 border-off-200'
-                  : ps.available === 0 ? 'bg-busy-50 text-busy-600 border-busy-200'
+                pv === 'unsure' ? 'bg-off-50 text-off-600 border-off-200'
+                  : pv === 'full' ? 'bg-busy-50 text-busy-600 border-busy-200'
                   : 'bg-ok-50 text-ok-600 border-ok-200'
               )}
             >
-              <Icon n={ps.offline ? 'sensor-off' : 'car'} s={13} />
-              {ps.offline ? '주차 확인 불가' : ps.available === 0 ? '만차' : `주차 ${ps.available}`}
+              <Icon n={pv === 'unsure' ? 'sensor-off' : 'car'} s={13} />
+              {pv === 'unsure' ? '주차 확인 불가' : pv === 'full' ? '만차' : `주차 ${ps.available}`}
             </span>
             <span className="grow" />
             <span className="text-[11px] font-extrabold text-ink-400">{lv.label}</span>
