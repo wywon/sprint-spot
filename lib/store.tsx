@@ -4,13 +4,16 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { usePathname } from 'next/navigation';
 import { CLEAN_AUTO_MS } from './tokens';
 import { rnd } from './format';
-import { adaptStore, adaptStoreDetail, type ApiStoreDetail, type ApiStoreListItem } from './adapt';
 import {
-  ADMIN_RES, INITIAL_RESERVATIONS, PARTNER_STORES, PUBLIC_LOTS, REVIEWS, ME
+  adaptAdminRes, adaptStore, adaptStoreDetail,
+  type ApiAdminRes, type ApiStoreDetail, type ApiStoreListItem,
+} from './adapt';
+import {
+  INITIAL_RESERVATIONS, PARTNER_STORES, PUBLIC_LOTS, REVIEWS, ME
 } from './mock';
 import type {
   AdminReservation, LogEntry, ParkingSlot, PartnerStore, Profile, PublicLot,
-  Reservation, Review, SensorState, StoreTable, TableStatus, Toast,
+  RejectReasonCode, Reservation, Review, SensorState, StoreTable, TableStatus, Toast,
 } from './types';
 
 /**
@@ -223,6 +226,17 @@ interface SpotApi {
   updateStoreInfo: (storeId: string, patch: StoreInfoPatch) => void;
   setAdminRes: React.Dispatch<React.SetStateAction<AdminReservation[]>>;
 
+  /**
+   * [a7] 예약 승인 · 거절.
+   * reason 은 reject 일 때만 쓴다 (lib/tokens.ts 의 REJECT_REASONS 키).
+   * 성공하면 true. 실패 사유는 이미 토스트로 나가 있다.
+   */
+  decideRes: (
+    id: string,
+    action: 'approve' | 'reject',
+    reason?: RejectReasonCode,
+  ) => Promise<boolean>;
+
   updateProfile: (next: Profile) => void;
 }
 
@@ -256,7 +270,18 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
   );
   const [lots, setLots] = useState<PublicLot[]>(() => PUBLIC_LOTS.map((l) => ({ ...l })));
   const [reservations, setRes] = useState<Reservation[]>(INITIAL_RESERVATIONS);
-  const [adminRes, setAdminRes] = useState<AdminReservation[]>(ADMIN_RES);
+  /**
+   * [a7] 관리자 예약.
+   * 목업(ADMIN_RES)으로 시작하지 않고 빈 배열에서 출발한다.
+   *
+   * ★ 왜 빈 배열인가
+   *   목업을 초기값으로 두면 관리자 화면을 여는 순간 가짜 예약 6건이 먼저 보이고,
+   *   3초 뒤 진짜 목록으로 바뀐다. 그 사이에 승인 버튼을 누르면 존재하지 않는
+   *   예약에 PATCH 를 날린다. 시연에서 관리자가 제일 먼저 보는 화면이라
+   *   "잠깐 보였다 사라지는 숫자"를 만들면 안 된다.
+   *   비어 있는 동안은 각 화면의 Empty State 가 받아 준다.
+   */
+  const [adminRes, setAdminRes] = useState<AdminReservation[]>([]);
   const [reviews, setReviews] = useState<Review[]>(REVIEWS);
   const [favorites, setFav] = useState<string[]>(['s1']);
   const [recent, setRecent] = useState<string[]>(['대흥동 손칼국수', '두부두루치기', '으능정이 주차장', '소제동 브런치']);
@@ -270,6 +295,8 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
 
   const pathname = usePathname();
   const focusId = useMemo(() => focusStoreId(pathname, reservations), [pathname, reservations]);
+  /** [a7] 관리자 화면인가. 예약 목록은 여기서만 읽는다 */
+  const isAdminPath = useMemo(() => (pathname ?? '').startsWith('/admin'), [pathname]);
 
   /** 폴링 루프를 즉시 한 바퀴 더 돌리는 손잡이 */
   const refreshRef = useRef<() => void>(() => {});
@@ -366,6 +393,28 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
+        /**
+         * [a7] 관리자 화면일 때만 예약 목록을 읽는다.
+         *
+         * ★ 손님 앱에서는 부르지 않는다
+         *   /api/admin/* 은 middleware 가 막고 있어 로그인하지 않은 손님 브라우저에서는
+         *   401 이 돌아온다. 그 401 이 위 try 블록의 catch 로 떨어지면
+         *   손님 화면에 "실시간 정보를 불러오지 못했어요" 토스트가 3초마다 뜬다.
+         *   필요 없는 요청이기도 하다 — 손님에게 남의 예약을 보여 줄 일이 없다.
+         *
+         * ★ 실패해도 매장 정보까지 버리지 않는다
+         *   예약만 못 읽었다고 배치도·주차면이 멈추면 안 되므로 catch 를 따로 둔다.
+         */
+        if (isAdminPath) {
+          try {
+            const rows = await getJSON<ApiAdminRes[]>('/api/admin/reservations');
+            if (!alive) return;
+            setAdminRes(rows.map(adaptAdminRes));
+          } catch (e) {
+            console.error('[poll:adminRes]', e);
+          }
+        }
+
         setLive(true);
         setLastSync(Date.now());
         warnedRef.current = false;
@@ -400,7 +449,7 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
       document.removeEventListener('visibilitychange', onVisible);
       refreshRef.current = () => {};
     };
-  }, [mounted, simOn, focusId, pushToast]);
+  }, [mounted, simOn, focusId, isAdminPath, pushToast]);
 
 /* ── 공영주차장 — 30초 폴링 ────────────────────────────────
      서버가 1분 캐시를 두므로 30초면 충분하다 */
@@ -496,6 +545,56 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
     refresh: () => refreshRef.current(),
     setEditing: (on: boolean) => { editingRef.current = on; },
     setSimOn, setRecent, pushToast, addLog, setAdminRes, updateProfile,
+
+    /**
+     * [a7] 예약 승인 · 거절
+     * ───────────────────────────────────────────────────────
+     * ★ 화면을 먼저 바꾸고 보낸다
+     *   승인을 누르고 3초를 기다려야 화면이 바뀌면 관리자는 같은 버튼을 또 누른다.
+     *   서버는 두 번째를 409(ALREADY_DECIDED)로 막지만, 화면에는
+     *   "이미 처리된 예약이에요"라는 실패 토스트가 뜬다. 아무 잘못도 안 했는데.
+     *   다른 쓰기(setTable·setSlot)와 같은 방식이다.
+     *
+     * ★ 거절한 예약은 목록에서 뺀다
+     *   GET /api/admin/reservations 가 pending 과 오늘 예약만 담으므로
+     *   서버가 다시 읽어와도 같은 모양이 된다. 화면이 한 번 깜빡이지 않는다.
+     *
+     * ★ 실패하면 즉시 되돌린다
+     *   send() 가 끝나며 refresh 를 부르니 3초 안에 서버 값이 덮어쓰긴 하지만,
+     *   그 3초 동안 없는 예약을 승인된 것처럼 보여 주면 안 된다.
+     */
+    decideRes: async (id, action, reason) => {
+      const before = adminRes;
+
+      setAdminRes((prev) =>
+        action === 'approve'
+          ? prev.map((r) => (r.id === id ? { ...r, status: 'upcoming' as const } : r))
+          : prev.filter((r) => r.id !== id),
+      );
+
+      const r = await send(
+        `/api/admin/reservations/${id}`,
+        action === 'approve' ? { action } : { action, reason },
+        action === 'approve' ? '예약을 승인하지 못했어요' : '예약을 처리하지 못했어요',
+      );
+
+      if (!r.ok) {
+        setAdminRes(before);
+        return false;
+      }
+
+      const t = before.find((x) => x.id === id);
+      pushToast(
+        action === 'approve'
+          ? {
+              title: '예약을 승인했어요',
+              desc: t ? `${t.time} ${t.name}님 ${t.party}인` : '',
+              tone: 'ok',
+            }
+          : { title: '예약을 거절했어요', desc: '손님에게 사유가 안내됐어요', tone: 'warn' },
+      );
+      return true;
+    },
 
     getStore: (id) => stores.find((s) => s.id === id),
     getLot:   (id) => lots.find((l) => l.id === id),

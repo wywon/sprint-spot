@@ -14,7 +14,8 @@
  */
 
 import type {
-  ParkingSlot, PartnerStore, SensorState, SlotStatus, StoreTable, TableStatus,
+  AdminReservation, ParkingSlot, PartnerStore, SensorState, SlotStatus,
+  StoreTable, TableStatus,
 } from './types';
 
 /* ── API 응답 모양 (README 기준) ───────────────────────────── */
@@ -176,5 +177,47 @@ function adaptSlot(s: ApiSlot, prev?: ParkingSlot): ParkingSlot {
     type: s.type === 'ev' || s.type === 'disabled' ? s.type : null,
     nearGate: Boolean(s.nearGate),
     confidence: typeof s.confidence === 'number' ? s.confidence : 1,
+  };
+}
+
+
+/* ── 관리자 예약 ──────────────────────────────────────────
+   [a7] GET /api/admin/reservations 응답 → AdminReservation
+
+   서버가 eta·전화번호 서식까지 만들어 보내므로 여기서는 모양만 맞춘다.
+   eta 를 클라이언트에서 계산하지 않는 이유 — 노트북 두 대의 시계가 다르면
+   같은 예약이 한쪽은 '8분 후', 다른 쪽은 '11분 후'가 된다. 시연에서 바로 보인다. */
+
+export interface ApiAdminRes {
+  id: string;
+  date: string;
+  time: string;
+  name: string;
+  party: number;
+  phone: string;
+  status: string;
+  memo: string;
+  seatType: string;
+  eta: string;
+  tableId: string | null;
+  rejectReason: string | null;
+  decidedAt: number | null;
+  createdAt: number;
+}
+
+export function adaptAdminRes(a: ApiAdminRes): AdminReservation {
+  return {
+    id: a.id,
+    date: a.date,
+    time: a.time,
+    name: a.name,
+    party: a.party,
+    phone: a.phone,
+    // 화면이 아는 상태만 넘긴다. rejected·canceled 는 목록에서 이미 빠져 있다
+    status: (a.status as AdminReservation['status']) ?? 'pending',
+    memo: a.memo ?? '',
+    seatType: a.seatType ?? '상관없음',
+    eta: a.eta ?? '-',
+    createdAt: a.createdAt,
   };
 }
