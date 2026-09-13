@@ -25,7 +25,7 @@ const STORE_ID = process.env.SPOT_STORE_ID || 's1';
 const PAYLOAD = JSON.stringify({
   storeId: STORE_ID,
   detectedAt: Date.now(),
-  slots: [{ code: 'A1', status: 'unknown' }],
+  slots: [{ code: 'P1', status: 'unknown' }],
 });
 
 console.log('==========================================');
