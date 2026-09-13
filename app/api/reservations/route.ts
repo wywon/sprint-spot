@@ -159,7 +159,12 @@ type UpcomingStatus = (typeof UPCOMING)[number]
 
 export async function GET(req: Request) {
   try {
-    const phone = new URL(req.url).searchParams.get('phone')
+    const raw = new URL(req.url).searchParams.get('phone')
+    /* DB 에는 숫자만 들어 있다 (seed.ts 의 digits()).
+       화면이 '010-2211-1234' 를 그대로 보내면 한 건도 못 찾는다.
+       서버 쪽에서도 한 번 더 벗겨 낸다 — 부르는 곳이 늘어날 때마다
+       같은 실수를 반복하지 않도록. */
+    const phone = raw ? raw.replace(/\D/g, '') : null
 
     // phone 이 없으면 전체를 주지 않는다 — 남의 예약이 다 보인다
     if (!phone) {

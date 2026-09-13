@@ -14,8 +14,8 @@
  */
 
 import type {
-  AdminReservation, ParkingSlot, PartnerStore, SensorState, SlotStatus,
-  StoreTable, TableStatus,
+  AdminReservation, ParkingSlot, PartnerStore, RejectReasonCode, ResStatus,
+  Reservation, SensorState, SlotStatus, StoreTable, TableStatus,
 } from './types';
 
 /* ── API 응답 모양 (README 기준) ───────────────────────────── */
@@ -220,4 +220,72 @@ export function adaptAdminRes(a: ApiAdminRes): AdminReservation {
     eta: a.eta ?? '-',
     createdAt: a.createdAt,
   };
+}
+
+
+/* ── 손님 예약 ────────────────────────────────────────────
+   [a7] GET /api/reservations?phone= 응답 → Reservation[]
+
+   서버는 upcoming / past 두 덩어리로 나눠 보낸다. 화면은 한 배열만 읽으므로
+   여기서 합친다. 두 덩어리의 필드가 조금 다르다 — past 에는 QR 코드와
+   예약자 정보가 없다(지난 예약 상세에 QR 을 띄우지 않는다는 규칙 때문이다).
+   비는 자리는 프로필 값으로 채운다. */
+
+export interface ApiResItem {
+  id: string;
+  status: string;
+  storeId: string;
+  storeName?: string;
+  date: string;
+  time: string;
+  people: number;
+  seatType?: string;
+  name?: string;
+  phone?: string;
+  request?: string;
+  receiptUploaded?: boolean;
+  reviewWritten?: boolean;
+  rejectReason?: string | null;
+  decidedAt?: number | null;
+}
+
+export interface ApiResList {
+  upcoming: ApiResItem[];
+  past: ApiResItem[];
+}
+
+export function adaptReservation(
+  a: ApiResItem,
+  me: { name: string; phone: string },
+  prev?: Reservation,
+): Reservation {
+  return {
+    id: a.id,
+    storeId: a.storeId,
+    date: a.date,
+    time: a.time,
+    party: a.people,
+    seatType: a.seatType ?? prev?.seatType ?? '상관없음',
+    status: (a.status as ResStatus) ?? 'pending',
+    name: a.name ?? prev?.name ?? me.name,
+    phone: a.phone ?? prev?.phone ?? me.phone,
+    memo: a.request ?? prev?.memo ?? '',
+    // 서버에 없는 값 — 손님이 화면에서 켜 둔 것이라 이전 값을 살린다
+    parkingAlert: prev?.parkingAlert ?? false,
+    exited: a.status === 'done',
+    receipt: a.receiptUploaded ?? prev?.receipt ?? false,
+    reviewed: a.reviewWritten ?? prev?.reviewed ?? false,
+    rejectReason: (a.rejectReason as RejectReasonCode | null) ?? null,
+    decidedAt: a.decidedAt ?? null,
+  };
+}
+
+export function adaptResList(
+  list: ApiResList,
+  me: { name: string; phone: string },
+  before: Reservation[],
+): Reservation[] {
+  const prev = new Map(before.map((r) => [r.id, r]));
+  return [...(list.upcoming ?? []), ...(list.past ?? [])]
+    .map((a) => adaptReservation(a, me, prev.get(a.id)));
 }

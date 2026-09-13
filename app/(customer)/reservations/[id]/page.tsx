@@ -8,6 +8,7 @@ import { ConfirmModal, NavSheet } from '@/components/ui/overlays';
 import { SubHeader, StickyCta } from '@/components/customer/Shell';
 import { cx, fmtDateK } from '@/lib/format';
 import { levelOf, parkingOptions, type ParkingOption } from '@/lib/status';
+import { isLiveRes } from '@/lib/types';
 import { useApp } from '@/lib/store';
 import ReceiptUpload from './ReceiptUpload';
 
@@ -27,7 +28,7 @@ import ReceiptUpload from './ReceiptUpload';
 export default function ReservationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const { getRes, getStore, lots, cancelReservation, uploadReceipt, pushToast } = useApp();
+  const { getRes, getStore, lots, resLoaded, cancelReservation, uploadReceipt, pushToast } = useApp();
 
   const [sort, setSort] = useState<'ai' | 'free' | 'near'>('ai');
   const [picked, setPicked] = useState<string | null>(null);
@@ -36,10 +37,23 @@ export default function ReservationDetailPage({ params }: { params: Promise<{ id
   
 
   const res = getRes(id);
-  
+
+  /* [a7] 예약 목록을 아직 안 읽었으면 404 가 아니라 로딩이다.
+     목업을 걷어내면서 첫 렌더의 목록이 빈 배열이 됐다. 주소로 바로 열거나
+     예약 완료 화면에서 '예약 상세 보기'를 누르면 그 순간 목록이 비어 있어
+     notFound() 가 즉시 터졌다. 예약이 없는 게 아니라 아직 안 읽은 것이다. */
+  if (!res && !resLoaded) {
+    return (
+      <div className="absolute inset-0 bg-ink-50 grid place-items-center">
+        <span className="w-6 h-6 rounded-full border-2 border-ink-200 border-t-brand-600 animate-spin" />
+      </div>
+    );
+  }
   if (!res) notFound();
   const store = getStore(res.storeId);
-  const past = res.status !== 'upcoming';
+  /* [a7] pending 은 아직 진행 중이다. status !== 'upcoming' 으로 가르면
+     승인 대기 예약이 '지난 예약' 화면으로 열린다 (QR 도 사라진다). */
+  const past = !isLiveRes(res.status);
 
   const options = parkingOptions(store ?? null, lots);
   const sorted = [...options].sort((a, b) => {

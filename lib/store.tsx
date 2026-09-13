@@ -2,14 +2,14 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { CLEAN_AUTO_MS } from './tokens';
-import { rnd } from './format';
+import { CLEAN_AUTO_MS, rejectReasonOf } from './tokens';
+import { fmtDateK, rnd } from './format';
 import {
-  adaptAdminRes, adaptStore, adaptStoreDetail,
-  type ApiAdminRes, type ApiStoreDetail, type ApiStoreListItem,
+  adaptAdminRes, adaptResList, adaptStore, adaptStoreDetail,
+  type ApiAdminRes, type ApiResList, type ApiStoreDetail, type ApiStoreListItem,
 } from './adapt';
 import {
-  INITIAL_RESERVATIONS, PARTNER_STORES, PUBLIC_LOTS, REVIEWS, ME
+  PARTNER_STORES, PUBLIC_LOTS, REVIEWS, ME
 } from './mock';
 import type {
   AdminReservation, LogEntry, ParkingSlot, PartnerStore, Profile, PublicLot,
@@ -194,6 +194,8 @@ interface SpotApi {
 
   /** [C15] 서버에서 한 번이라도 받아왔는가. false 면 아직 목업을 보고 있다 */
   live: boolean;
+  /** [a7] 예약 목록을 한 번이라도 불러왔는가 */
+  resLoaded: boolean;
   /** [C15] 마지막으로 성공한 갱신 시각(ms). 0 이면 아직 모른다 */
   lastSync: number;
   /** [C15] 즉시 한 번 더 읽기 */
@@ -212,8 +214,9 @@ interface SpotApi {
   getRes: (id: string) => Reservation | undefined;
 
   toggleFav: (id: string) => void;
-  addReservation: (r: Omit<Reservation, 'id'>) => string;
-  cancelReservation: (id: string) => void;
+  /** [a7] 서버가 id 를 만든다. 실패하면 null — 화면은 완료 페이지로 넘어가면 안 된다 */
+  addReservation: (r: Omit<Reservation, 'id'>) => Promise<string | null>;
+  cancelReservation: (id: string) => Promise<void>;
   uploadReceipt: (id: string) => void;
   addReview: (storeId: string, resId: string, rating: number, text: string) => void;
 
@@ -269,7 +272,20 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
     }))
   );
   const [lots, setLots] = useState<PublicLot[]>(() => PUBLIC_LOTS.map((l) => ({ ...l })));
-  const [reservations, setRes] = useState<Reservation[]>(INITIAL_RESERVATIONS);
+  /**
+   * [a7] 손님 예약. 목업(INITIAL_RESERVATIONS)을 걷어냈다.
+   * seed 가 같은 내용을 DB 에 넣어 두었으므로 폴링이 한 바퀴 돌면 같은 목록이 나온다.
+   * 목업으로 시작하면 새로고침 때마다 '취소한 예약'이 되살아난다.
+   */
+  const [reservations, setRes] = useState<Reservation[]>([]);
+  /**
+   * [a7] 예약 목록을 한 번이라도 불러왔는가.
+   * 목업을 걷어내면서 첫 렌더의 reservations 가 빈 배열이 됐다.
+   * /reservations/[id] 를 주소로 직접 열면 그 순간 목록이 비어 있어서
+   * notFound() 가 즉시 터진다. 예약이 없는 게 아니라 아직 안 읽은 것이다.
+   * 이 플래그가 false 인 동안 화면은 404 대신 로딩을 보여 준다.
+   */
+  const [resLoaded, setResLoaded] = useState(false);
   /**
    * [a7] 관리자 예약.
    * 목업(ADMIN_RES)으로 시작하지 않고 빈 배열에서 출발한다.
@@ -304,6 +320,16 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
   const warnedRef = useRef(false);
   /** [b6] 배치도 편집 중인가. 편집 중에는 폴링이 화면을 덮어쓰지 않는다 */
   const editingRef = useRef(false);
+  /**
+   * [a7] 예약 상태를 지난번에 무엇으로 봤는가. id → status
+   * 승인·거절 알림을 한 번만 띄우기 위해 쓴다. 3초마다 같은 토스트가 뜨면
+   * 알림이 아니라 소음이다.
+   * 첫 바퀴는 비교 대상이 없으므로 알림을 띄우지 않는다 — 앱을 켤 때마다
+   * 예전에 확정된 예약까지 "자리가 준비됐어요"로 다시 알려 주면 안 된다.
+   */
+  const resSeenRef = useRef<Map<string, string> | null>(null);
+  /** 폴링 루프 안에서 최신 프로필을 읽기 위한 거울. 프로필이 바뀌어도 루프를 다시 만들지 않는다 */
+  const profileRef = useRef<Profile>(ME);
 
   /* 마운트 직후 한 번 — 시각 관련 값을 실제 시간으로 채운다 */
   useEffect(() => {
@@ -343,6 +369,50 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
     setProfile(next);
     try { localStorage.setItem('spot.profile', JSON.stringify(next)); } catch {}
   }, []);
+
+  /* 프로필이 바뀌면 거울도 갱신한다 (마이 → 프로필 수정) */
+  useEffect(() => { profileRef.current = profile; }, [profile]);
+
+  /**
+   * [a7] 승인·거절을 손님에게 알린다.
+   *
+   * ★ 첫 바퀴는 건너뛴다
+   *   앱을 켤 때마다 예전에 확정된 예약까지 "자리가 준비됐어요"로 다시 알리면
+   *   알림이 아니라 소음이다. 기준선을 먼저 만들고 그다음부터 비교한다.
+   *
+   * ★ 바뀐 것만 본다
+   *   pending → upcoming, pending → rejected 두 가지다.
+   *   관리자가 화면에서 누르는 즉시 손님 화면에 최대 3초 뒤 뜬다.
+   *   진짜 푸시(Service Worker + Web Push)는 Phase 2 — 앱이 닫혀 있을 때가
+   *   필요해지는 시점에 붙인다. 시연에서는 두 화면을 나란히 놓으므로
+   *   오히려 이쪽이 잘 보인다.
+   */
+  const notifyDecided = useCallback((next: Reservation[]) => {
+    const seen = resSeenRef.current;
+    const now = new Map(next.map((r) => [r.id, r.status as string]));
+
+    if (seen === null) {              // 첫 바퀴 — 기준선만 만든다
+      resSeenRef.current = now;
+      return;
+    }
+
+    for (const r of next) {
+      if (seen.get(r.id) !== 'pending') continue;
+
+      if (r.status === 'upcoming') {
+        pushToast({
+          title: '자리가 준비됐어요',
+          desc: `${fmtDateK(r.date)} ${r.time} · ${r.party}명`,
+          tone: 'ok', icon: 'check',
+        });
+      } else if (r.status === 'rejected') {
+        const reason = rejectReasonOf(r.rejectReason);
+        pushToast({ title: reason.title, desc: reason.desc, tone: 'warn' });
+      }
+    }
+
+    resSeenRef.current = now;
+  }, [pushToast]);
 
   /* ── 3초 폴링 ────────────────────────────────────────────────
      setInterval 을 쓰지 않는다. 응답이 3초보다 늦으면 요청이 겹쳐 쌓이기 때문에,
@@ -413,6 +483,34 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
           } catch (e) {
             console.error('[poll:adminRes]', e);
           }
+        } else {
+          /**
+           * [a7] 손님 예약 목록.
+           * 전화번호로 찾는다. 로그인이 없어서 지금은 이 방법뿐이다
+           * (전화번호 인증 후 조회는 Phase 2).
+           *
+           * 승인·거절을 여기서 알아챈다. 서버가 밀어 주는 게 아니라
+           * 3초마다 읽다가 status 가 달라진 것을 보고 토스트를 띄운다.
+           * Web Push 없이도 앱이 열려 있는 동안은 알림처럼 동작한다.
+           */
+          try {
+            const raw = await getJSON<ApiResList>(
+              `/api/reservations?phone=${profileRef.current.phone.replace(/\D/g, '')}`,
+            );
+            if (!alive) return;
+
+            setRes((before) => {
+              const next = adaptResList(raw, profileRef.current, before);
+              notifyDecided(next);
+              return next;
+            });
+            setResLoaded(true);
+          } catch (e) {
+            console.error('[poll:reservations]', e);
+            // 실패해도 '아직 안 불러왔다'로 남겨 두면 상세 화면이 영원히 로딩이다.
+            // 서버가 죽었을 때는 notFound 를 보여 주는 편이 낫다
+            setResLoaded(true);
+          }
         }
 
         setLive(true);
@@ -449,7 +547,7 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
       document.removeEventListener('visibilitychange', onVisible);
       refreshRef.current = () => {};
     };
-  }, [mounted, simOn, focusId, isAdminPath, pushToast]);
+  }, [mounted, simOn, focusId, isAdminPath, pushToast, notifyDecided]);
 
 /* ── 공영주차장 — 30초 폴링 ────────────────────────────────
      서버가 1분 캐시를 두므로 30초면 충분하다 */
@@ -541,7 +639,7 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
 
   const api: SpotApi = {
     mounted, stores, lots, reservations, adminRes, reviews, favorites, recent, simOn, toasts, log, profile,
-    live, lastSync,
+    live, lastSync, resLoaded,
     refresh: () => refreshRef.current(),
     setEditing: (on: boolean) => { editingRef.current = on; },
     setSimOn, setRecent, pushToast, addLog, setAdminRes, updateProfile,
@@ -602,13 +700,91 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
 
     toggleFav: (id) => setFav((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id])),
 
-    addReservation: (r) => {
-      const id = 'r' + Math.random().toString(36).slice(2, 7);
-      setRes((p) => [{ ...r, id }, ...p]);
-      return id;
+    /**
+     * [a7] 예약 요청 — POST /api/reservations
+     * ───────────────────────────────────────────────────────
+     * ★ 화면을 먼저 바꾸지 않는다
+     *   다른 쓰기(setTable·setSlot)와 반대다. 서버가 id 를 만들어 주고,
+     *   그 id 로 완료 화면(/reserve/[id]/done?rid=)과 QR 코드가 만들어진다.
+     *   가짜 id 를 먼저 보여 주면 완료 화면을 열어 놓고 새로고침했을 때
+     *   존재하지 않는 예약을 보게 된다.
+     *   또 서버가 정원을 다시 세므로 여기서 낙관적으로 굴면 안 된다 —
+     *   "예약됐어요" 를 띄운 뒤 "사실은 마감이었어요" 가 최악이다.
+     *
+     * ★ 실패하면 null
+     *   화면은 null 을 받으면 완료 페이지로 넘어가지 않는다.
+     *   실패 사유 문구는 서버가 준 것을 그대로 띄운다 — 우리 문구보다 정확하다.
+     *   (TIME_UNAVAILABLE / DUPLICATE_RESERVATION 은 안내가 서로 다르다)
+     */
+    addReservation: async (r) => {
+      try {
+        const res = await fetch('/api/reservations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            storeId: r.storeId,
+            date: r.date,
+            time: r.time,
+            people: r.party,
+            seatType: r.seatType,
+            name: r.name,
+            phone: r.phone.replace(/\D/g, ''),   // 서버는 숫자 11자리만 받는다
+            request: r.memo,
+            noShowAgreed: true,                  // 화면이 체크를 강제하고 있다
+          }),
+        });
+        const j = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+
+        if (!res.ok) {
+          pushToast({
+            title: '예약을 접수하지 못했어요',
+            desc: (j?.message as string) ?? `오류 ${res.status}`,
+            tone: 'warn',
+          });
+          return null;
+        }
+
+        const id = String(j?.id ?? '');
+        // 방금 만든 것은 pending 이다. 폴링을 기다리지 않고 목록에 먼저 넣는다
+        setRes((p) => [{ ...r, id, status: 'pending' as const }, ...p.filter((x) => x.id !== id)]);
+        // 기준선에도 등록한다. 안 하면 다음 바퀴에서 '처음 본 예약'이 되어
+        // 승인 알림을 놓친다
+        resSeenRef.current?.set(id, 'pending');
+        refreshRef.current();
+        return id;
+      } catch (e) {
+        console.error('[addReservation]', e);
+        pushToast({ title: '예약을 접수하지 못했어요', desc: '연결을 확인해 주세요', tone: 'warn' });
+        return null;
+      }
     },
-    cancelReservation: (id) =>
-      setRes((p) => p.map((r) => (r.id === id ? { ...r, status: 'canceled' as const } : r))),
+
+    /** [a7] 취소 — pending 과 upcoming 둘 다 취소할 수 있다 */
+    cancelReservation: async (id) => {
+      const target = reservations.find((r) => r.id === id);
+      setRes((p) => p.map((r) => (r.id === id ? { ...r, status: 'canceled' as const } : r)));
+
+      try {
+        const res = await fetch(`/api/reservations/${id}/cancel`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: (target?.phone ?? profileRef.current.phone).replace(/\D/g, '') }),
+        });
+        if (!res.ok) {
+          const j = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+          pushToast({
+            title: '예약을 취소하지 못했어요',
+            desc: (j?.message as string) ?? `오류 ${res.status}`,
+            tone: 'warn',
+          });
+        }
+      } catch (e) {
+        console.error('[cancelReservation]', e);
+        pushToast({ title: '예약을 취소하지 못했어요', desc: '연결을 확인해 주세요', tone: 'warn' });
+      } finally {
+        refreshRef.current();   // 성공이든 실패든 서버가 진실이다
+      }
+    },
     uploadReceipt: (id) =>
       setRes((p) => p.map((r) => (r.id === id ? { ...r, receipt: true } : r))),
     addReview: (storeId, resId, rating, text) => {
