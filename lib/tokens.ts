@@ -86,6 +86,54 @@ export const NAV_APPS = [
   { key: 'kakao', name: '카카오맵', color: 'bg-[#FEE500]', initial: 'K', dark: true },
 ] as const;
 
+/**
+ * [a7] 거절 사유 — 관리자가 고르는 라벨과 손님에게 나가는 문구를 짝지어 둔다.
+ *
+ * ★ 두 문장을 나눠 놓은 이유
+ *   관리자는 짧게 골라야 하고(한 손으로 3초), 손님은 다음 행동을 알아야 한다.
+ *   같은 문장을 양쪽에 쓰면 관리자 화면은 길어지고 손님 화면은 무뚝뚝해진다.
+ *
+ * ★ '거절'이라는 말을 손님에게 쓰지 않는다
+ *   매장이 손님을 밀어낸 게 아니라 사정이 안 되는 것이다.
+ *   문구는 항상 다음 행동(다른 시간 고르기)으로 이어져야 한다.
+ */
+export const REJECT_REASONS = [
+  {
+    key: 'full',
+    admin: '자리가 없어요',
+    title: '그 시간은 자리가 어려워요',
+    desc: '이미 예약이 찬 시간이에요. 앞뒤 시간대는 여유가 있을 수 있어요.',
+  },
+  {
+    key: 'party',
+    admin: '인원을 받기 어려워요',
+    title: '요청하신 인원은 어려울 것 같아요',
+    desc: '인원을 줄이시거나 다른 시간으로 다시 잡아보시겠어요?',
+  },
+  {
+    key: 'closed',
+    admin: '그날 휴무예요',
+    title: '그날은 문을 열지 않아요',
+    desc: '다른 날짜로 잡아주시면 준비해 둘게요.',
+  },
+  {
+    key: 'break',
+    admin: '준비 시간이에요',
+    title: '그 시간에는 준비 중이에요',
+    desc: '조금 이르거나 늦은 시간으로 잡아보시겠어요?',
+  },
+  {
+    key: 'etc',
+    admin: '매장 사정',
+    title: '매장 사정으로 어려울 것 같아요',
+    desc: '불편을 드려 죄송해요. 다른 시간을 골라주시면 감사하겠습니다.',
+  },
+] as const;
+
+/** 코드 → 문구. 모르는 코드가 와도 화면이 비지 않게 etc 로 떨어진다 */
+export const rejectReasonOf = (key?: string | null) =>
+  REJECT_REASONS.find((r) => r.key === key) ?? REJECT_REASONS[REJECT_REASONS.length - 1];
+
 /** 정리 중 → 빈 자리 자동 전환까지 걸리는 시간. 관리자가 버튼을 누르지 않아도 풀린다 */
 export const CLEAN_AUTO_MS = 40 * 1000;
 

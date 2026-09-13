@@ -42,9 +42,22 @@ enum SensorState {
   offline
 }
 
-/// Reservation(손님) 3개 + AdminReservation(관리자) 3개를 합쳤다. 아래 설명 참조.
+/// Reservation(손님) + AdminReservation(관리자) 를 한 벌로 합쳤다.
+///
+/// [a7] 승인제로 바꾸면서 pending 과 rejected 를 넣었다.
+///   예전에는 손님이 누르는 순간 곧바로 upcoming(확정)이었다.
+///   실제 식당은 그렇게 굴러가지 않는다. 그 시간에 자리를 뺄 수 있는지,
+///   그 인원을 받을 수 있는지는 매장만 안다. 확정을 매장이 하게 바꿨다.
+///
+///   pending  → 손님이 요청함. 매장 확인 대기. 아직 자리를 잡아 둔 상태가 아니다
+///   upcoming → 매장이 승인함. 이제부터 진짜 예약이다
+///   rejected → 매장이 거절함. canceled 와 반드시 구분한다.
+///              손님이 마음을 바꾼 것과 매장이 못 받는 것은 다른 사건이고,
+///              노쇼율·취소율 통계에서 섞이면 매장 평가가 왜곡된다
 enum ReservationStatus {
+  pending
   upcoming
+  rejected
   seated
   done
   noshow
@@ -209,11 +222,18 @@ model Reservation {
   time     String // '12:30'
   party    Int
   seatType String
-  status   ReservationStatus @default(upcoming)
+  /// [a7] 기본값이 pending 이다. 확정은 관리자가 승인을 눌러야 생긴다
+  status   ReservationStatus @default(pending)
 
   name  String
   phone String
   memo  String @default("")
+
+  /// [a7] 거절 사유 코드. lib/tokens.ts 의 REJECT_REASONS 키를 그대로 쓴다.
+  /// 문구를 DB 에 넣지 않는 이유 — 문구는 바뀐다. 코드로 두면 나중에 표현만 고치면 된다
+  rejectReason String?
+  /// [a7] 매장이 승인·거절을 누른 시각. 손님 앱이 "새로 결정된 건"을 가려내는 데 쓴다
+  decidedAt    DateTime?
 
   parkingAlert Boolean @default(false)
   exited       Boolean @default(false)
