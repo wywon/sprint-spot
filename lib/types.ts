@@ -187,6 +187,21 @@ export type ResStatus =
 export const isLiveRes = (s: ResStatus) => s === 'pending' || s === 'upcoming';
 
 /**
+ * 그 시간의 자리를 차지하고 있는 상태.
+ * ─────────────────────────────────────────────────────────
+ * [a7] pending 이 여기 들어간다. 먼저 요청한 사람이 자리를 잡는다(B안).
+ *
+ * 이 목록을 서버 두 곳이 똑같이 쓴다.
+ *   POST /api/reservations          — 정원이 찼는지 판정
+ *   GET  /api/stores/[id]/times     — 시간 버튼을 잠글지 판정
+ *
+ * 한쪽만 고치면 "선택은 되는데 누르면 마감"이라는 최악의 경험이 된다.
+ * seated 가 들어 있는 이유 — 착석한 손님이 그 테이블을 쓰고 있다.
+ * rejected·canceled·noshow·done 은 자리를 놓아준다.
+ */
+export const HOLDING_STATUSES = ['pending', 'upcoming', 'seated'] as const;
+
+/**
  * 거절 사유 코드.
  * 관리자는 이 중 하나를 고르고, 손님에게는 코드에 대응하는 문구가 나간다.
  * 문구가 아니라 코드를 저장하는 이유 — 문구는 반드시 바뀐다.

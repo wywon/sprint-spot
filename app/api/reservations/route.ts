@@ -2,6 +2,7 @@
 import { NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { HOLDING_STATUSES } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
@@ -73,9 +74,26 @@ export async function POST(req: Request) {
       (t) => t.seats >= people && t.status !== 'disabled',
     ).length
 
+    /**
+     * [a7] 승인제 — 여기서 만드는 것은 '확정'이 아니라 '요청'이다.
+     *
+     * ★ pending 도 정원을 차지한다 (B안)
+     *   먼저 요청한 사람이 자리를 잡는다. 그래야 손님 화면의 시간 버튼과
+     *   실제 가능 여부가 어긋나지 않는다.
+     *   HOLDING_STATUSES 를 GET /times 와 같이 쓰는 이유가 이것이다.
+     *
+     * ★ 트랜잭션 안에서 세고 만든다
+     *   두 사람이 같은 순간에 마지막 한 자리를 누르면 둘 다 통과할 수 있다.
+     *   세기와 만들기가 한 덩어리여야 막힌다.
+     *
+     * ★ 만료는 아직 없다
+     *   관리자가 승인을 잊으면 그 자리는 계속 묶인다. 자동 해제(10분 등)는
+     *   Phase 2 로 미뤘다. 지금 넣으면 승인 흐름 자체를 검증하기 전에
+     *   변수가 하나 늘고, 시연에서 10분을 기다릴 일도 없다.
+     */
     const created = await prisma.$transaction(async (tx) => {
       const used = await tx.reservation.count({
-        where: { storeId, date, time, status: { in: ['upcoming', 'seated'] } },
+        where: { storeId, date, time, status: { in: [...HOLDING_STATUSES] } },
       })
       if (used >= capacity) {
         throw new Error('TIME_UNAVAILABLE')
@@ -88,7 +106,7 @@ export async function POST(req: Request) {
           name: name.trim(),
           phone,
           memo: typeof request === 'string' ? request : '',
-          status: 'upcoming',
+          status: 'pending',   // 스키마 기본값과 같지만 의도를 눈에 보이게 적는다
         },
       })
     })
@@ -106,6 +124,8 @@ export async function POST(req: Request) {
       name: created.name,
       phone: created.phone,
       createdAt: created.createdAt.getTime(),
+      rejectReason: created.rejectReason,
+      decidedAt: created.decidedAt?.getTime() ?? null,
     }, { status: 201, headers: { 'Cache-Control': 'no-store' } })
   } catch (e) {
     if (e instanceof Error && e.message === 'TIME_UNAVAILABLE') {
@@ -129,8 +149,13 @@ export async function POST(req: Request) {
   }
 }
 
-/** 스키마에 cancelled 가 없어 canceled 로 맞춘다 (README 표기와 다름) */
-const UPCOMING = ['upcoming', 'seated'] as const
+/**
+ * '다가오는 예약' 탭에 남는 상태.
+ * [a7] pending 이 들어간다. 승인 대기 중인 예약이 '지난 예약'으로 떨어지면
+ *      손님은 자기가 뭘 신청했는지 볼 데가 없어진다.
+ */
+const UPCOMING = ['pending', 'upcoming', 'seated'] as const
+type UpcomingStatus = (typeof UPCOMING)[number]
 
 export async function GET(req: Request) {
   try {
@@ -151,7 +176,7 @@ export async function GET(req: Request) {
     })
 
     const upcoming = rows
-      .filter((r) => UPCOMING.includes(r.status as 'upcoming' | 'seated'))
+      .filter((r) => UPCOMING.includes(r.status as UpcomingStatus))
       .map((r) => ({
         id: r.id,
         code: makeCode(r.date, r.phone, r.time),
@@ -167,10 +192,13 @@ export async function GET(req: Request) {
         name: r.name,
         phone: r.phone,
         request: r.memo,
+        // [a7] 손님 앱이 '확인 중 / 확정' 배지를 그리는 데 쓴다
+        rejectReason: r.rejectReason,
+        decidedAt: r.decidedAt?.getTime() ?? null,
       }))
 
     const past = rows
-      .filter((r) => !UPCOMING.includes(r.status as 'upcoming' | 'seated'))
+      .filter((r) => !UPCOMING.includes(r.status as UpcomingStatus))
       .map((r) => ({
         id: r.id,                       // past 에는 code 를 안 보낸다 (QR 없음)
         status: r.status,
@@ -182,6 +210,9 @@ export async function GET(req: Request) {
         visitedAt: r.createdAt.getTime(),
         receiptUploaded: r.receipt,
         reviewWritten: r.reviewed,
+        // 거절당한 예약도 지난 목록에 남는다. 왜 거절됐는지 볼 수 있어야 한다
+        rejectReason: r.rejectReason,
+        decidedAt: r.decidedAt?.getTime() ?? null,
       }))
 
     return NextResponse.json(
