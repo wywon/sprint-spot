@@ -76,7 +76,7 @@ const stats = {
 //
 //   { spaceNumber: 1, occupied: true }
 //        ↓
-//   { code: "A1", status: "occupied" }
+//   { code: "P1", status: "occupied" }
 //
 // stale=true 이면 전부 "unknown" 으로 보낸다.
 // 아두이노가 빠졌을 때 옛날 값을 "available" 이라고 우기는 것보다,
@@ -87,7 +87,7 @@ function toSpotPayload(spaces, stale) {
     storeId: STORE_ID,
     detectedAt: Date.now(),
     slots: spaces.map((s) => ({
-      code: 'A' + s.spaceNumber,
+      code: 'P' + s.spaceNumber,
       status: stale ? 'unknown' : s.occupied ? 'occupied' : 'available',
     })),
   };
