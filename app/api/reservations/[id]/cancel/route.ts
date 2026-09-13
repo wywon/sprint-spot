@@ -92,10 +92,16 @@ export async function POST(
       )
     }
 
-    // updateMany + status 조건 — 읽은 뒤 쓰기 전 사이에
-    // 자동 미방문 스윕이 상태를 바꿨다면 여기서 0건이 되어 덮어쓰지 않는다
+    /* updateMany + status 조건 — 읽은 뒤 쓰기 전 사이에
+       자동 미방문 스윕이나 관리자 승인이 상태를 바꿨다면
+       여기서 0건이 되어 덮어쓰지 않는다.
+
+       [a7] 'upcoming' 만 적혀 있어서 pending 예약이 취소되지 않았다.
+            앞의 검사는 통과하는데 여기서 0건이 되어 409 가 나갔고,
+            손님 화면은 취소한 것처럼 보였다가 3초 뒤 되돌아왔다.
+            검사와 쓰기의 조건이 다르면 반드시 이런 교착이 생긴다. */
     const updated = await prisma.reservation.updateMany({
-      where: { id, status: 'upcoming' },
+      where: { id, status: { in: ['pending', 'upcoming'] } },
       data: { status: 'canceled' },
     })
 

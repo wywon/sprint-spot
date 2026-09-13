@@ -236,7 +236,7 @@ interface SpotApi {
    */
   decideRes: (
     id: string,
-    action: 'approve' | 'reject',
+    action: 'approve' | 'reject' | 'seat' | 'cancel' | 'noshow',
     reason?: RejectReasonCode,
   ) => Promise<boolean>;
 
@@ -330,6 +330,14 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
   const resSeenRef = useRef<Map<string, string> | null>(null);
   /** 폴링 루프 안에서 최신 프로필을 읽기 위한 거울. 프로필이 바뀌어도 루프를 다시 만들지 않는다 */
   const profileRef = useRef<Profile>(ME);
+  /**
+   * 예약 목록 거울.
+   * setRes 의 갱신 함수 안에서 토스트를 띄우면 안 되기 때문에 둔다 —
+   * 갱신 함수는 순수해야 하고(React 개발 모드는 일부러 두 번 호출한다),
+   * 그 안에서 부른 setToasts 는 이번 렌더에 못 끼어서 화면이 먼저 바뀐 뒤
+   * 알림이 한 박자 늦게 뜬다.
+   */
+  const resRef = useRef<Reservation[]>([]);
 
   /* 마운트 직후 한 번 — 시각 관련 값을 실제 시간으로 채운다 */
   useEffect(() => {
@@ -499,11 +507,14 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
             );
             if (!alive) return;
 
-            setRes((before) => {
-              const next = adaptResList(raw, profileRef.current, before);
-              notifyDecided(next);
-              return next;
-            });
+            /* 순서가 중요하다.
+               diff → 알림 → 목록 갱신 을 같은 흐름에서 연달아 호출하면
+               React 가 한 번에 묶어 처리해서 화면과 알림이 같은 프레임에 나온다.
+               갱신 함수 안에서 알림을 띄우면 화면이 먼저 바뀌고 알림이 뒤따라온다. */
+            const next = adaptResList(raw, profileRef.current, resRef.current);
+            notifyDecided(next);
+            resRef.current = next;
+            setRes(next);
             setResLoaded(true);
           } catch (e) {
             console.error('[poll:reservations]', e);
@@ -663,17 +674,35 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
      */
     decideRes: async (id, action, reason) => {
       const before = adminRes;
+      const t = before.find((x) => x.id === id);
 
+      /* 바뀔 상태를 화면에 먼저 반영한다. 거절·취소·미방문은 목록에서 빼지 않고
+         상태만 바꾼다 — 미방문은 오늘 목록에 남아야 하고(나중에 확인할 일이 있다),
+         거절은 서버가 다음 바퀴에 알아서 빼 준다. */
+      const NEXT: Record<string, string> = {
+        approve: 'upcoming', reject: 'rejected',
+        seat: 'seated', cancel: 'canceled', noshow: 'noshow',
+      };
       setAdminRes((prev) =>
-        action === 'approve'
-          ? prev.map((r) => (r.id === id ? { ...r, status: 'upcoming' as const } : r))
-          : prev.filter((r) => r.id !== id),
+        prev.map((r) =>
+          r.id === id
+            ? { ...r, status: NEXT[action] as typeof r.status, eta: action === 'approve' ? r.eta : '-' }
+            : r,
+        ),
       );
+
+      const FAIL: Record<string, string> = {
+        approve: '예약을 승인하지 못했어요',
+        reject: '예약을 처리하지 못했어요',
+        seat: '입장 처리를 하지 못했어요',
+        cancel: '예약을 취소하지 못했어요',
+        noshow: '미방문 처리를 하지 못했어요',
+      };
 
       const r = await send(
         `/api/admin/reservations/${id}`,
-        action === 'approve' ? { action } : { action, reason },
-        action === 'approve' ? '예약을 승인하지 못했어요' : '예약을 처리하지 못했어요',
+        action === 'reject' ? { action, reason } : { action },
+        FAIL[action],
       );
 
       if (!r.ok) {
@@ -681,16 +710,18 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
 
-      const t = before.find((x) => x.id === id);
-      pushToast(
-        action === 'approve'
-          ? {
-              title: '예약을 승인했어요',
-              desc: t ? `${t.time} ${t.name}님 ${t.party}인` : '',
-              tone: 'ok',
-            }
-          : { title: '예약을 거절했어요', desc: '손님에게 사유가 안내됐어요', tone: 'warn' },
-      );
+      const OK: Record<string, { title: string; desc: string; tone: 'ok' | 'warn' | 'busy' }> = {
+        approve: {
+          title: '예약을 승인했어요',
+          desc: t ? `${t.time} ${t.name}님 ${t.party}인 · 손님에게 알림이 갔어요` : '',
+          tone: 'ok',
+        },
+        reject: { title: '예약을 거절했어요', desc: '손님에게 사유가 안내됐어요', tone: 'warn' },
+        seat: { title: t ? `${t.name}님 입장 처리` : '입장 처리', desc: '', tone: 'ok' },
+        cancel: { title: t ? `${t.name}님 예약 취소` : '예약 취소', desc: '', tone: 'busy' },
+        noshow: { title: t ? `${t.name}님 미방문 처리` : '미방문 처리', desc: '', tone: 'warn' },
+      };
+      pushToast(OK[action]);
       return true;
     },
 
@@ -746,7 +777,12 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
 
         const id = String(j?.id ?? '');
         // 방금 만든 것은 pending 이다. 폴링을 기다리지 않고 목록에 먼저 넣는다
-        setRes((p) => [{ ...r, id, status: 'pending' as const }, ...p.filter((x) => x.id !== id)]);
+        const optimistic = [
+          { ...r, id, status: 'pending' as const },
+          ...resRef.current.filter((x) => x.id !== id),
+        ];
+        resRef.current = optimistic;
+        setRes(optimistic);
         // 기준선에도 등록한다. 안 하면 다음 바퀴에서 '처음 본 예약'이 되어
         // 승인 알림을 놓친다
         resSeenRef.current?.set(id, 'pending');
@@ -762,7 +798,11 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
     /** [a7] 취소 — pending 과 upcoming 둘 다 취소할 수 있다 */
     cancelReservation: async (id) => {
       const target = reservations.find((r) => r.id === id);
-      setRes((p) => p.map((r) => (r.id === id ? { ...r, status: 'canceled' as const } : r)));
+      const after = resRef.current.map((r) =>
+        r.id === id ? { ...r, status: 'canceled' as const } : r,
+      );
+      resRef.current = after;
+      setRes(after);
 
       try {
         const res = await fetch(`/api/reservations/${id}/cancel`, {

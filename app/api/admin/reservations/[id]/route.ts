@@ -10,8 +10,17 @@ export const dynamic = 'force-dynamic'
  * 예약 승인 · 거절
  * ─────────────────────────────────────────────────────────────
  * PATCH /api/admin/reservations/[id]
- *   { "action": "approve" }
- *   { "action": "reject", "reason": "full" }
+ *   { "action": "approve" }              승인
+ *   { "action": "reject", "reason": "full" }  거절 (사유 필수)
+ *   { "action": "seat" }                 착석
+ *   { "action": "cancel" }               손님이 전화로 못 온다고 알려온 경우
+ *   { "action": "noshow" }               안 왔다고 손으로 확정
+ *
+ * ★ 왜 예약 쪽에도 seat/cancel/noshow 를 두는가
+ *   PATCH /api/admin/tables/[id] 가 같은 일을 한다. 그런데 그건 테이블을
+ *   먼저 고른 뒤에만 쓸 수 있다. 홀 운영 오른쪽 예약 목록에서 누를 때는
+ *   아직 어느 테이블에 앉힐지 정하지 않았다.
+ *   테이블 배정은 배치도에서, 예약 상태는 여기서 — 둘 다 같은 행을 쓴다.
  *
  * ★ pending 에서만 움직인다
  *   이미 답한 예약을 다시 뒤집지 않는다. 관리자가 승인을 누른 뒤 마음을 바꾸는 건
@@ -47,9 +56,19 @@ export async function PATCH(
     const body = await req.json().catch(() => null)
     const action = body?.action
 
-    if (action !== 'approve' && action !== 'reject') {
+    /** 동작 → [허용되는 현재 상태, 바뀔 상태] */
+    const MOVES: Record<string, { from: string[]; to: string }> = {
+      approve: { from: ['pending'], to: 'upcoming' },
+      reject: { from: ['pending'], to: 'rejected' },
+      seat: { from: ['upcoming'], to: 'seated' },
+      cancel: { from: ['pending', 'upcoming'], to: 'canceled' },
+      noshow: { from: ['upcoming'], to: 'noshow' },
+    }
+
+    const move = typeof action === 'string' ? MOVES[action] : undefined
+    if (!move) {
       return NextResponse.json(
-        { error: 'BAD_ACTION', message: 'approve 또는 reject 만 가능합니다.' },
+        { error: 'BAD_ACTION', message: '처리할 수 없는 동작입니다.' },
         { status: 400 },
       )
     }
@@ -79,11 +98,11 @@ export async function PATCH(
         { status: 404 },
       )
     }
-    if (res.status !== 'pending') {
+    if (!move.from.includes(res.status)) {
       return NextResponse.json(
         {
           error: 'ALREADY_DECIDED',
-          message: '이미 처리된 예약이에요.',
+          message: '이미 처리된 예약이에요. 화면을 새로고침해 주세요.',
           status: res.status,
         },
         { status: 409 },
@@ -106,6 +125,33 @@ export async function PATCH(
             REJECT_REASONS.find((r) => r.key === reason)?.admin ?? reason
           })`,
           tone: 'warn',
+        },
+      }).catch((e) => console.error('[admin/reservations] log', e))
+
+      return NextResponse.json({
+        id: updated.id,
+        status: updated.status,
+        rejectReason: updated.rejectReason,
+        decidedAt: updated.decidedAt?.getTime() ?? null,
+      }, { headers: { 'Cache-Control': 'no-store' } })
+    }
+
+    /* ── 착석 · 취소 · 미방문 ─────────────────────────────
+       정원 계산이 필요 없다. 자리를 더 쓰는 동작이 아니기 때문이다.
+       (seated 는 이미 HOLDING_STATUSES 에 들어 있고, 나머지는 자리를 놓아준다) */
+    if (action === 'seat' || action === 'cancel' || action === 'noshow') {
+      const updated = await prisma.reservation.update({
+        where: { id },
+        data: { status: move.to as 'seated' | 'canceled' | 'noshow' },
+      })
+
+      const word = action === 'seat' ? '착석' : action === 'cancel' ? '취소' : '미방문'
+      await prisma.activityLog.create({
+        data: {
+          storeId: res.storeId,
+          who: '최영호',
+          msg: `${res.time} ${res.name}님 예약 ${word} 처리`,
+          tone: action === 'seat' ? 'ok' : 'warn',
         },
       }).catch((e) => console.error('[admin/reservations] log', e))
 

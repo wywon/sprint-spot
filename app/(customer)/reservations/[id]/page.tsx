@@ -8,6 +8,7 @@ import { ConfirmModal, NavSheet } from '@/components/ui/overlays';
 import { SubHeader, StickyCta } from '@/components/customer/Shell';
 import { cx, fmtDateK } from '@/lib/format';
 import { levelOf, parkingOptions, type ParkingOption } from '@/lib/status';
+import { rejectReasonOf } from '@/lib/tokens';
 import { isLiveRes } from '@/lib/types';
 import { useApp } from '@/lib/store';
 import ReceiptUpload from './ReceiptUpload';
@@ -54,6 +55,11 @@ export default function ReservationDetailPage({ params }: { params: Promise<{ id
   /* [a7] pending 은 아직 진행 중이다. status !== 'upcoming' 으로 가르면
      승인 대기 예약이 '지난 예약' 화면으로 열린다 (QR 도 사라진다). */
   const past = !isLiveRes(res.status);
+  /* [a7] 아직 매장이 안 본 예약. 확정된 예약과 화면이 달라야 한다 —
+     QR·출발 알림·주차 현황·길안내는 자리가 잡힌 뒤에 의미가 있다.
+     '갈 수 있는 자리'가 아직 아닌데 길안내를 띄우면 손님이 출발한다. */
+  const waiting = res.status === 'pending';
+  const confirmed = res.status === 'upcoming';
 
   const options = parkingOptions(store ?? null, lots);
   const sorted = [...options].sort((a, b) => {
@@ -82,17 +88,34 @@ export default function ReservationDetailPage({ params }: { params: Promise<{ id
               <span
                 className={cx(
                   'w-11 h-11 rounded-xl grid place-items-center text-white shrink-0',
-                  res.status === 'canceled' ? 'bg-off-400' : past ? 'bg-ink-400' : 'bg-brand-600'
+                  res.status === 'canceled' ? 'bg-off-400'
+                    : res.status === 'rejected' ? 'bg-busy-500'
+                    : waiting ? 'bg-warn-500'
+                    : past ? 'bg-ink-400' : 'bg-brand-600'
                 )}
               >
-                <Icon n={res.status === 'canceled' ? 'x' : past ? 'check' : 'calendar'} s={21} />
+                <Icon
+                  n={
+                    res.status === 'canceled' || res.status === 'rejected' ? 'x'
+                      : waiting ? 'clock'
+                      : past ? 'check' : 'calendar'
+                  }
+                  s={21}
+                />
               </span>
               <div>
                 <div className="text-[16px] font-extrabold text-ink-900">
-                  {res.status === 'canceled' ? '취소된 예약이에요' : past ? '방문을 마친 예약이에요' : '예약이 확정되었어요'}
+                  {res.status === 'canceled' ? '취소된 예약이에요'
+                    : res.status === 'rejected' ? rejectReasonOf(res.rejectReason).title
+                    : waiting ? '매장에서 확인하고 있어요'
+                    : past ? '방문을 마친 예약이에요'
+                    : '자리가 준비됐어요'}
                 </div>
-                <div className="text-[12px] font-bold text-ink-500 mt-0.5">
-                  {past ? '이용해 주셔서 감사합니다' : '방문 2시간 전까지 변경·취소할 수 있어요'}
+                <div className="text-[12px] font-bold text-ink-500 mt-0.5 leading-relaxed">
+                  {res.status === 'rejected' ? rejectReasonOf(res.rejectReason).desc
+                    : waiting ? '답변이 오면 알려드릴게요. 보통 10분 안에 와요'
+                    : past ? '이용해 주셔서 감사합니다'
+                    : '방문 2시간 전까지 변경·취소할 수 있어요'}
                 </div>
               </div>
             </div>
@@ -115,7 +138,7 @@ export default function ReservationDetailPage({ params }: { params: Promise<{ id
             ))}
 
             {/* 입장 확인 QR — 지난 예약에는 표시하지 않는다 */}
-            {!past && res.status === 'upcoming' && (
+            {confirmed && (
               <div className="mt-4 pt-4 border-t border-ink-100 flex flex-col items-center">
                 <div className="w-[124px] h-[124px] rounded-xl bg-ink-900 grid place-items-center">
                   <div className="grid grid-cols-7 gap-[3px] p-2">
@@ -149,7 +172,7 @@ export default function ReservationDetailPage({ params }: { params: Promise<{ id
           </Card>
 
           {/* ── 다가오는 예약: 출발 알림 + 주차 현황 ── */}
-          {!past && res.status === 'upcoming' && (
+          {confirmed && (
             <>
               <Card className="p-4 border-2 border-brand-200 bg-brand-50">
                 <div className="flex items-start gap-2.5">
@@ -272,6 +295,19 @@ export default function ReservationDetailPage({ params }: { params: Promise<{ id
           )
         ) : res.status === 'canceled' ? (
           <Button variant="outline" size="lg" full disabled>취소된 예약이에요</Button>
+        ) : res.status === 'rejected' ? (
+          /* 부정 상태로 끝내지 않는다. 다음 행동을 하나 둔다 */
+          <Button
+            variant="primary" size="lg" full icon="calendar"
+            onClick={() => router.push(`/reserve/${res.storeId}`)}
+          >
+            다른 시간으로 다시 잡기
+          </Button>
+        ) : waiting ? (
+          /* 승인 전에는 길안내를 띄우지 않는다. 아직 갈 수 있는 자리가 아니다 */
+          <Button variant="outline" size="lg" full onClick={() => setAskCancel(true)}>
+            예약 요청 취소
+          </Button>
         ) : (
           <div className="flex gap-2">
             <Button variant="outline" size="lg" className="shrink-0 px-5" onClick={() => setAskCancel(true)}>
@@ -296,13 +332,16 @@ export default function ReservationDetailPage({ params }: { params: Promise<{ id
       <ConfirmModal
         open={askCancel}
         onClose={() => setAskCancel(false)}
-        title="예약을 취소할까요?"
-        sub="취소 후에는 같은 시간대를 다시 잡지 못할 수 있어요."
-        confirmLabel="예약 취소"
+        title={waiting ? '요청을 취소할까요?' : '예약을 취소할까요?'}
+        sub={waiting
+          ? '아직 매장이 확인 전이에요. 취소하면 그 시간은 다른 분께 넘어갈 수 있어요.'
+          : '취소 후에는 같은 시간대를 다시 잡지 못할 수 있어요.'}
+        confirmLabel={waiting ? '요청 취소' : '예약 취소'}
         danger
         onConfirm={() => {
-          cancelReservation(res.id);
-          pushToast({ title: '예약이 취소되었어요', tone: 'busy', icon: 'x' });
+          /* 실패 토스트는 store 쪽에서 띄운다. 여기서 성공을 단정하지 않는다 —
+             서버가 거절하면(이미 승인됨·시각 지남) 목록에 그대로 남는다 */
+          void cancelReservation(res.id);
           router.push('/reservations');
         }}
       />
