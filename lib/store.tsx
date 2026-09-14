@@ -2,7 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { CLEAN_AUTO_MS, rejectReasonOf } from './tokens';
+import { CLEAN_AUTO_MS, HIDDEN_STORE_IDS, rejectReasonOf } from './tokens';
 import { fmtDateK, rnd } from './format';
 import {
   adaptAdminRes, adaptResList, adaptStore, adaptStoreDetail,
@@ -265,7 +265,7 @@ export function useNow(interval = 1000): number {
 export function SpotProvider({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
   const [stores, setStores] = useState<PartnerStore[]>(() =>
-    PARTNER_STORES.map((s) => ({
+    PARTNER_STORES.filter((s) => !HIDDEN_STORE_IDS.includes(s.id)).map((s) => ({
       ...s,
       tables: s.tables.map((t) => ({ ...t })),
       parking: { ...s.parking, slots: s.parking.slots.map((x) => ({ ...x })) },
@@ -457,6 +457,8 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
           const before = new Map(prev.map((s) => [s.id, s]));
           return list
             .filter((x) => x.partner)          // 미입점 매장은 이 배열에 넣지 않는다
+            // [a8] 가려 둔 매장은 손님 화면 전체에서 빠진다 (lib/tokens.ts)
+            .filter((x) => !HIDDEN_STORE_IDS.includes(x.id))
             .map((x) => adaptStore(x, before.get(x.id)));
         });
 
