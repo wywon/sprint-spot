@@ -39,8 +39,19 @@ function formatPhone(v: string) {
   return `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}`;
 }
 
-/** 12가3456 / 서울12가3456 */
+/**
+ * 12가3456 / 서울12가3456
+ *
+ * [a8] 공백을 지우고 검사한다.
+ *   기본값이 '31가 5678' 인데 예전 정규식은 띄어쓰기를 안 받아서 늘 오류였다.
+ *   실제 번호판 표기가 띄어쓰기를 쓰는데 그걸 틀렸다고 하면 안 된다.
+ *   저장할 때도 공백을 지운 형태로 통일한다 — 같은 차가 두 문자열로 저장되면
+ *   나중에 주차 정산에서 대조가 안 된다.
+ */
 const CAR_RE = /^(?:[가-힣]{2})?\d{2,3}[가-힣]\d{4}$/;
+
+/** 공백 제거 — 검사와 저장이 같은 값을 보게 한다 */
+const normCar = (v: string) => v.replace(/\s+/g, '');
 
 type Errors = Partial<Record<'name' | 'phone' | 'car', string>>;
 
@@ -55,7 +66,7 @@ function validate(f: Profile): Errors {
   if (!digits) e.phone = '연락처를 입력해 주세요';
   else if (digits.length < 10 || digits.length > 11) e.phone = '연락처를 정확히 입력해 주세요';
 
-  const car = f.car.trim();
+  const car = normCar(f.car);
   if (car && !CAR_RE.test(car)) e.car = '차량번호 형식을 확인해 주세요 (예: 12가3456)';
 
   return e;
@@ -77,7 +88,18 @@ export default function ProfileEditPage() {
 
   const errors = validate(form);
   const dirty = JSON.stringify(form) !== JSON.stringify(profile);
-  const canSave = dirty && Object.keys(errors).length === 0 && !saving;
+
+  /**
+   * [a8] 오류가 있어도 버튼은 켜 둔다.
+   *   예전에는 오류가 하나라도 있으면 버튼이 죽었는데, 오류 문구는 그 칸을
+   *   건드린 적이 있어야(touched) 보였다. 그래서 차량번호가 기본값 그대로면
+   *   이름만 고친 사람은 '왜 저장이 안 되지' 만 겪고 이유를 볼 방법이 없었다.
+   *
+   *   '왜 안 눌리지' 는 손님이 풀 수 없는 문제이고,
+   *   '눌렀더니 여기가 틀렸다더라' 는 고칠 수 있는 문제다.
+   *   막는 것은 save() 안에서 하고, 거기서 모든 칸을 touched 로 만들어 보여 준다.
+   */
+  const canSave = dirty && !saving;
 
   const set = <K extends keyof Profile>(k: K, v: Profile[K]) =>
     setForm((p) => ({ ...p, [k]: v }));
@@ -88,7 +110,7 @@ export default function ProfileEditPage() {
 
     setSaving(true);
     try {
-      updateProfile({ ...form, name: form.name.trim(), car: form.car.trim() });
+      updateProfile({ ...form, name: form.name.trim(), car: normCar(form.car) });
       pushToast({ title: '프로필을 저장했어요', tone: 'ok', icon: 'check' });
       router.replace('/my');   // push 아님 — 뒤로가기로 편집 화면에 다시 안 들어오게
     } catch {

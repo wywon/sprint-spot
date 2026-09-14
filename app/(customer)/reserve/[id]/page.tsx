@@ -6,8 +6,7 @@ import { Icon } from '@/components/ui/Icon';
 import { Badge, Button, Card } from '@/components/ui/primitives';
 import { SubHeader, StickyCta } from '@/components/customer/Shell';
 import { cx, fmtDateK, pad } from '@/lib/format';
-import { parkStats, seatStats } from '@/lib/status';
-import { ME } from '@/lib/mock';
+import { parkStats, parkVerdict, seatStats } from '@/lib/status';
 import { useApp } from '@/lib/store';
 
 /**
@@ -28,11 +27,40 @@ import { useApp } from '@/lib/store';
  *
  * ★ 테이블을 고르지 않는다. 테이블 번호도 나오지 않는다.
  *   자리 배정은 매장이 그날 상황을 보고 결정하는 게 서로에게 낫다.
+ *
+ * [a8] 시간 목록을 서버에서 받아온다.
+ *   ─────────────────────────────────────────────────────────
+ *   예전에는 timeOpen() 이 '날짜+시간' 문자열의 문자 코드를 더해 7 로 나눈
+ *   나머지로 가능·불가를 정했다. 화면에만 있는 계산이라 서버와 아무 관계가
+ *   없었고, 그래서 이런 일이 벌어졌다.
+ *
+ *     · 매장이 승인해서 자리가 찬 시간도 손님 화면에는 계속 '선택 가능'
+ *     · 영업시간 밖인 시간도 눌림 (11:00~20:00 이 화면에 박혀 있었다)
+ *     · 오늘 이미 지난 시간도 눌림
+ *     · 눌러서 요청을 보내면 서버가 거절
+ *
+ *   lib/types.ts 주석이 경고해 둔 그대로다. 이제 A7 이 만든
+ *   GET /api/stores/[id]/times?date=&people= 하나만 본다.
+ *   그 라우트는 영업시간·라스트오더(마감 60분 전)·인원이 앉을 수 있는 테이블 수·
+ *   이미 자리를 차지한 예약(pending 포함)을 전부 세서 답한다.
+ *   POST /api/reservations 와 같은 목록(HOLDING_STATUSES)을 보므로 두 답이 어긋나지 않는다.
+ *
+ * ★ 목록은 언제 다시 읽는가
+ *   날짜·인원이 바뀔 때, 그리고 1단계로 돌아올 때다.
+ *   2·3단계에 머무는 동안 다른 손님이 그 시간을 가져갈 수 있다.
+ *   돌아왔을 때 고른 시간이 사라져 있으면 선택을 풀고 알려 준다.
+ *   최종 판정은 어차피 서버가 한 번 더 한다 — 화면은 '틀릴 수 있는 안내'이고
+ *   서버가 '맞는 답'이다. 이 순서를 뒤집지 말 것.
  */
 
 const PARTIES = [1, 2, 3, 4, 5, 6, 7, 8];
 const SEAT_TYPES = ['상관없음', '창가석', '테이블석', '룸'];
-const ALL_TIMES = ['11:00','11:30','12:00','12:30','13:00','13:30','17:00','17:30','18:00','18:30','19:00','19:30','20:00'];
+
+/** GET /api/stores/[id]/times 응답 한 칸 */
+interface TimeSlot {
+  time: string;
+  available: boolean;
+}
 
 /** 14일치 날짜 후보 */
 function buildDates(base: Date) {
@@ -48,22 +76,10 @@ function buildDates(base: Date) {
   });
 }
 
-/**
- * 그 시간에 예약을 받을 수 있는가.
- * ★ 목업이지만 Math.random 을 쓰지 않는다 — 다시 렌더할 때마다 답이 바뀌면 안 된다.
- *   4주차에 이 함수를 서버 호출로 바꾼다: GET /api/stores/[id]/slots?date=&party=
- */
-function timeOpen(dateKey: string, time: string, party: number): boolean {
-  const seed = [...(dateKey + time)].reduce((a, c) => a + c.charCodeAt(0), 0);
-  if (party >= 7) return seed % 4 !== 0;   // 단체는 자리가 적다
-  if (party >= 5) return seed % 5 !== 0;
-  return seed % 7 !== 0;
-}
-
 export default function ReservePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const { getStore, addReservation, pushToast } = useApp();
+  const { getStore, addReservation, pushToast, profile } = useApp();
 
   const [step, setStep] = useState(1);
   const [party, setParty] = useState(2);
@@ -92,14 +108,66 @@ export default function ReservePage({ params }: { params: Promise<{ id: string }
    *
    * useEffect 는 브라우저에서만 돌기 때문에 두 문제를 한 번에 없앤다.
    * 값이 채워지기 전 한 프레임 동안은 날짜 칸이 비는데, 그건 아래에서 자리만 잡아 둔다.
-   *
-   * ※ 서버가 계산하는 값(hours.isOpen, 예약 since)은 이 방법으로 못 고친다.
-   *   Vercel 환경변수에 TZ=Asia/Seoul 을 넣어야 한다. 아직 안 넣었다.
    */
   const [dates, setDates] = useState<ReturnType<typeof buildDates>>([]);
-  useEffect(() => { setDates(buildDates(new Date())); }, []);
+  useEffect(() => {
+    const list = buildDates(new Date());
+    setDates(list);
+    // [a8] 오늘을 미리 골라 둔다. 날짜를 안 고르면 시간 목록을 부를 수 없어
+    //      첫 화면이 늘 '날짜를 먼저 선택해 주세요' 로 비어 있었다.
+    setDate((d) => d ?? list[0]?.key ?? null);
+  }, []);
+
+  /* ── [a8] 예약 가능 시간 ──────────────────────────────────
+     times === null 은 '아직 모른다'(로딩)이고 [] 는 '없다'이다.
+     둘을 같은 값으로 쓰면 로딩 중에 "예약 가능한 시간이 없어요" 가 번쩍인다. */
+  const [times, setTimes] = useState<TimeSlot[] | null>(null);
+  const [timesErr, setTimesErr] = useState<string | null>(null);
+  /** 값이 바뀌면 다시 읽는다 (1단계 복귀·재시도·요청 실패) */
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    if (!date) return;
+    let alive = true;
+    setTimes(null);
+    setTimesErr(null);
+
+    fetch(`/api/stores/${id}/times?date=${date}&people=${party}`, { cache: 'no-store' })
+      .then(async (r) => {
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(body?.message ?? '예약 가능 시간을 불러오지 못했어요');
+        return (body?.times ?? []) as TimeSlot[];
+      })
+      .then((list) => { if (alive) setTimes(list); })
+      .catch((e: Error) => { if (alive) setTimesErr(e.message); });
+
+    return () => { alive = false; };
+  }, [id, date, party, reloadKey]);
+
+  /* 1단계로 돌아오면 다시 읽는다. 2·3단계에 있는 동안 남이 가져갔을 수 있다 */
+  useEffect(() => {
+    if (step === 1) setReloadKey((k) => k + 1);
+  }, [step]);
+
+  /* 고른 시간이 사라졌으면 선택을 풀고 알려 준다.
+     조용히 풀어 버리면 손님은 자기가 안 고른 줄 안다. */
+  useEffect(() => {
+    if (!time || !times) return;
+    const hit = times.find((t) => t.time === time);
+    if (hit?.available) return;
+    setTime(null);
+    pushToast({
+      title: '방금 그 시간이 마감됐어요',
+      desc: '다른 시간을 골라 주세요',
+      tone: 'warn', icon: 'alert',
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [times]);
+
   const ss = seatStats(store);
   const ps = parkStats(store);
+  const pv = parkVerdict(ps);
+  const todayKey = dates[0]?.key;
 
   const canNext = step === 1 ? !!(party && date && time) : step === 2 ? true : agree;
 
@@ -126,9 +194,17 @@ export default function ReservePage({ params }: { params: Promise<{ id: string }
     try {
       const rid = await addReservation({
         storeId: store.id, date, time, party, seatType,
-        status: 'pending', name: ME.name, phone: ME.phone, memo, parkingAlert: alertOn,
+        status: 'pending', name: profile.name, phone: profile.phone, memo, parkingAlert: alertOn,
       });
-      if (!rid) return;
+      if (!rid) {
+        /* [a8] 실패 사유 토스트는 store 쪽에서 이미 나갔다.
+           여기서는 다른 시간을 고를 수 있는 자리로 되돌려 놓는다.
+           마감이 원인인 경우가 가장 흔하므로 목록도 새로 읽는다. */
+        setTime(null);
+        setStep(1);
+        setReloadKey((k) => k + 1);
+        return;
+      }
 
       pushToast({
         title: '예약 요청을 보냈어요',
@@ -236,39 +312,81 @@ export default function ReservePage({ params }: { params: Promise<{ id: string }
                 <div className="text-[11.5px] font-bold text-ink-500 mb-3">
                   {date ? `${fmtDateK(date)} · ${party}명 기준` : '날짜를 먼저 선택해 주세요'}
                 </div>
-                <div className="grid grid-cols-4 gap-2">
-                  {ALL_TIMES.map((t) => {
-                    const open = date ? timeOpen(date, t, party) : false;
-                    const on = time === t;
-                    return (
-                      <button
-                        key={t}
-                        disabled={!open}
-                        onClick={() => setTime(t)}
-                        className={cx(
-                          'h-11 rounded-xl border-2 text-[13px] font-extrabold tnum transition-all',
-                          !open
-                            ? 'bg-ink-100 text-ink-300 border-ink-100 cursor-not-allowed'
-                            : on
-                            ? 'bg-brand-600 text-white border-brand-600'
-                            : 'bg-white text-ink-800 border-ink-200 active:scale-[.97]'
-                        )}
-                      >
-                        {t}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="mt-3 flex items-center gap-3">
-                  <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-ink-600">
-                    <span className="w-3.5 h-3.5 rounded border-2 border-ink-200 bg-white" />
-                    선택 가능
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-ink-600">
-                    <span className="w-3.5 h-3.5 rounded bg-ink-100" />
-                    선택 불가
-                  </span>
-                </div>
+
+                {/* 못 읽었을 때 — 빈 목록으로 위장하지 않는다.
+                    '시간이 없다' 와 '못 물어봤다' 는 다른 말이고,
+                    전자로 보이면 손님은 다른 날짜를 뒤지느라 시간을 쓴다 */}
+                {timesErr ? (
+                  <div className="rounded-xl bg-off-50 border border-off-200 px-3.5 py-3">
+                    <div className="flex items-start gap-2.5">
+                      <Icon n="alert" s={16} cls="text-off-600 shrink-0 mt-px" />
+                      <div className="grow">
+                        <div className="text-[12.5px] font-extrabold text-off-700">
+                          예약 가능한 시간을 불러오지 못했어요
+                        </div>
+                        <div className="text-[11.5px] font-medium text-ink-500 mt-0.5">{timesErr}</div>
+                      </div>
+                    </div>
+                    <Button
+                      variant="outline" size="sm" icon="refresh" className="mt-3"
+                      onClick={() => setReloadKey((k) => k + 1)}
+                    >
+                      다시 시도
+                    </Button>
+                  </div>
+                ) : times === null ? (
+                  <div className="grid grid-cols-4 gap-2">
+                    {Array.from({ length: 8 }, (_, i) => (
+                      <div key={i} className="h-11 rounded-xl bg-ink-100 animate-pulse" />
+                    ))}
+                  </div>
+                ) : times.length === 0 ? (
+                  <div className="rounded-xl bg-ink-50 border border-ink-200 px-3.5 py-4 text-center">
+                    <div className="text-[12.5px] font-extrabold text-ink-700">
+                      {date === todayKey
+                        ? '오늘은 예약을 받을 수 있는 시간이 지났어요'
+                        : '이 날짜에는 예약을 받지 않아요'}
+                    </div>
+                    <div className="text-[11.5px] font-medium text-ink-500 mt-1">
+                      위에서 다른 날짜를 골라 주세요
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-4 gap-2">
+                      {times.map((t) => {
+                        const on = time === t.time;
+                        return (
+                          <button
+                            key={t.time}
+                            disabled={!t.available}
+                            onClick={() => setTime(t.time)}
+                            className={cx(
+                              'h-11 rounded-xl border-2 text-[13px] font-extrabold tnum transition-all',
+                              !t.available
+                                ? 'bg-ink-100 text-ink-300 border-ink-100 cursor-not-allowed'
+                                : on
+                                ? 'bg-brand-600 text-white border-brand-600'
+                                : 'bg-white text-ink-800 border-ink-200 active:scale-[.97]'
+                            )}
+                          >
+                            {t.time}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-3 flex items-center gap-3">
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-ink-600">
+                        <span className="w-3.5 h-3.5 rounded border-2 border-ink-200 bg-white" />
+                        선택 가능
+                      </span>
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-ink-600">
+                        <span className="w-3.5 h-3.5 rounded bg-ink-100" />
+                        예약 마감
+                      </span>
+                    </div>
+                  </>
+                )}
               </Card>
             </>
           )}
@@ -321,7 +439,7 @@ export default function ReservePage({ params }: { params: Promise<{ id: string }
                   ['일시', `${fmtDateK(date)} ${time}`],
                   ['인원', `${party}명`],
                   ['좌석', seatType],
-                  ['예약자', `${ME.name} · ${ME.phone}`],
+                  ['예약자', `${profile.name} · ${profile.phone}`],
                   ...(memo ? [['요청사항', memo]] : []),
                 ].map(([l, v]) => (
                   <div key={l} className="flex gap-3 py-2.5 border-b border-ink-100 last:border-0">
@@ -331,24 +449,32 @@ export default function ReservePage({ params }: { params: Promise<{ id: string }
                 ))}
               </Card>
 
-              {/* 방문 시점 주차 예상 — 이 서비스만의 화면 */}
+              {/* 매장 주차 현황 — 이 서비스만의 화면
+                  [a8] 예전에는 "최근 4주 평균 · 보통 3~5자리" 라고 적혀 있었다.
+                  4주치 통계도 없고 3~5 라는 숫자도 화면에 박아 둔 값이었다.
+                  없는 근거를 지어내느니 지금 값을 지금 값이라고 말하는 편이 낫다.
+                  센서가 죽었을 때(unsure) 0 으로 세지 않는 것도 같은 이유다. */}
               <Card className="p-4 border-2 border-brand-200">
                 <div className="flex items-center gap-2 mb-3">
                   <span className="w-8 h-8 rounded-lg bg-brand-600 text-white grid place-items-center shrink-0">
                     <Icon n="car" s={17} />
                   </span>
                   <div>
-                    <div className="text-[13px] font-extrabold text-ink-900">방문 시점 주차 예상</div>
-                    <div className="text-[11px] font-bold text-ink-500">{time} 기준 · 최근 4주 평균</div>
+                    <div className="text-[13px] font-extrabold text-ink-900">매장 주차 현황</div>
+                    <div className="text-[11px] font-bold text-ink-500">지금 기준</div>
                   </div>
                 </div>
                 <div className="rounded-xl bg-brand-50 p-3.5">
                   <div className="text-[13px] font-extrabold text-brand-800">
-                    이 시간대에는 보통 <span className="tnum">3~5자리</span> 정도 비어 있어요
+                    {pv === 'unsure'
+                      ? '지금은 주차 상황을 확인할 수 없어요'
+                      : pv === 'full'
+                      ? '지금은 주차장이 꽉 차 있어요'
+                      : <>지금은 <span className="tnum">{ps.available}자리</span> 비어 있어요</>}
                   </div>
                   <div className="text-[11.5px] font-medium text-brand-800/80 mt-1 leading-relaxed">
-                    매장 주차장 총 {ps.total}면 기준이에요. 만차일 때를 대비해 예약 상세에서
-                    근처 공영주차장도 함께 확인하실 수 있어요.
+                    매장 주차장 총 {ps.total}면 기준이에요. {time}에는 달라질 수 있으니,
+                    예약 상세에서 방문 직전에 다시 확인하시고 근처 공영주차장도 함께 보실 수 있어요.
                   </div>
                 </div>
 
@@ -391,7 +517,7 @@ export default function ReservePage({ params }: { params: Promise<{ id: string }
           </Button>
         ) : (
           <Button variant="primary" size="lg" full disabled={!agree} onClick={submit} icon="check">
-            예약 완료하기
+            예약 요청하기
           </Button>
         )}
       </StickyCta>
