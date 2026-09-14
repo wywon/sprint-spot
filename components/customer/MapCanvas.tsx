@@ -100,7 +100,8 @@ function warnOnce(key: string, msg: string) {
 
 type SdkState = 'loading' | 'ready' | 'nokey' | 'error';
 
-function useKakaoSdk(): SdkState {
+/** [a8] 검색 화면도 이 훅으로 SDK 를 올린다 (지도가 없는 화면이라) */
+export function useKakaoSdk(): SdkState {
   const key = process.env.NEXT_PUBLIC_KAKAO_MAP_KEY;
   const [state, setState] = useState<SdkState>(key ? 'loading' : 'nokey');
 
