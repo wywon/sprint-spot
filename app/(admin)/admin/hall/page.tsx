@@ -7,9 +7,9 @@ import { ConfirmModal } from '@/components/ui/overlays';
 import { AdminTopbar } from '@/components/admin/Sidebar';
 import { TableMap } from '@/components/admin/TableMap';
 import { cx } from '@/lib/format';
-import { ADMIN_STORE_ID, REJECT_REASONS, TABLE } from '@/lib/tokens';
+import { ADMIN_STORE_ID, REJECT_REASONS, RES_ADMIN, TABLE } from '@/lib/tokens';
 import { useApp } from '@/lib/store';
-import type { AdminReservation, RejectReasonCode, StoreTable } from '@/lib/types';
+import { isOpenAdminRes, type AdminReservation, type RejectReasonCode, type StoreTable } from '@/lib/types';
 
 /**
  * 홀 운영
@@ -166,9 +166,12 @@ export default function AdminHallPage() {
           <div className="p-5 border-b border-ink-200">
             <div className="text-[14px] font-extrabold text-ink-900">오늘 예약</div>
             <div className="text-[11.5px] font-bold text-ink-500 mt-1 tnum">
+              {/* [b10] 아직 처리할 예약과 끝난 예약을 갈라 센다.
+                  전에는 도착 예정·착석·미방문 셋만 세서, 거절·취소한 건이 목록엔
+                  보이는데 요약엔 없었다. 숫자와 카드 수가 안 맞으면 둘 다 못 믿는다. */}
               도착 예정 {todayRes.filter((r) => r.status === 'upcoming').length} ·
               착석 {todayRes.filter((r) => r.status === 'seated').length} ·
-              미방문 {todayRes.filter((r) => r.status === 'noshow').length}
+              종료 {todayRes.filter((r) => !isOpenAdminRes(r.status)).length}
             </div>
           </div>
 
@@ -238,50 +241,66 @@ export default function AdminHallPage() {
                 오늘 예약이 없어요
               </div>
             )}
-            {todayRes.map((r) => (
-              <div
-                key={r.id}
-                className={cx(
-                  'p-3.5 rounded-xl border',
-                  r.status === 'noshow' ? 'border-ink-200 bg-ink-50 opacity-70' : 'border-ink-200 bg-white'
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-[14px] font-extrabold text-brand-700 tnum shrink-0">{r.time}</span>
-                  <span className="text-[13px] font-extrabold text-ink-900 grow truncate">{r.name}</span>
-                  <span className="text-[11.5px] font-extrabold text-ink-500 tnum shrink-0">{r.party}명</span>
-                </div>
-
-                <div className="text-[11px] font-bold text-ink-400 mt-1 tnum">
-                  {r.phone} · {r.status === 'upcoming' ? r.eta : r.status === 'seated' ? '착석' : '미방문'}
-                </div>
-                {r.memo && <div className="text-[11.5px] font-medium text-ink-500 mt-1.5">{r.memo}</div>}
-
-                {r.status === 'upcoming' && (
-                  /* [a7] 로컬 상태만 바꾸던 것을 실제 API 로 바꿨다.
-                     예전에는 눌러도 서버에 안 갔고, 이제 3초 폴링이 덮어쓰므로
-                     그대로 뒀으면 눌러도 되돌아가는 것처럼 보인다.
-
-                     '되돌리기'를 뺐다 — 서버 상태를 되돌리려면 역방향 전이가 필요한데
-                     seated → upcoming 은 허용하지 않는다. 손님이 이미 앉아 있는데
-                     "아직 안 왔음"으로 되돌리는 건 실제로 일어날 일이 아니다. */
-                  <div className="flex gap-2 mt-3">
-                    <Button
-                      variant="ok" size="sm" full icon="check"
-                      onClick={() => void decideRes(r.id, 'seat')}
-                    >
-                      입장
-                    </Button>
-                    <Button
-                      variant="outline" size="sm" full
-                      onClick={() => void decideRes(r.id, 'cancel')}
-                    >
-                      취소
-                    </Button>
+            {todayRes.map((r) => {
+              /* [b10] 상태의 '말'과 색을 lib/tokens.ts 에서 가져온다.
+                 전에는 여기 삼항이 박혀 있었다 —
+                   r.status === 'upcoming' ? r.eta : r.status === 'seated' ? '착석' : '미방문'
+                 else 가 '미방문'이라 거절·취소·방문 완료가 전부 미방문으로 보였다.
+                 타입을 넓혀도 컴파일러가 못 잡는 모양이라(else 가 다 받는다)
+                 표 조회로 바꾼다. 상태가 또 늘면 Record 가 컴파일 에러로 잡아 준다. */
+              const st = RES_ADMIN[r.status];
+              const open = isOpenAdminRes(r.status);
+              return (
+                <div
+                  key={r.id}
+                  className={cx(
+                    'p-3.5 rounded-xl border',
+                    // 끝난 예약은 눌러 둔다. 관리자가 찾는 건 아직 남은 일이다
+                    open ? 'border-ink-200 bg-white' : 'border-ink-200 bg-ink-50 opacity-70'
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-[14px] font-extrabold text-brand-700 tnum shrink-0">{r.time}</span>
+                    <span className="text-[13px] font-extrabold text-ink-900 grow truncate">{r.name}</span>
+                    <span className="text-[11.5px] font-extrabold text-ink-500 tnum shrink-0">{r.party}명</span>
                   </div>
-                )}
-              </div>
-            ))}
+
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <span className={cx('inline-flex items-center gap-1 text-[11px] font-extrabold', st.text)}>
+                      <Icon n={st.icon} s={11} />
+                      {st.label}
+                    </span>
+                    {/* 도착 예정일 때만 '8분 후'가 의미 있다. 끝난 예약에는 '-' 가 들어온다 */}
+                    {r.status === 'upcoming' && (
+                      <span className="text-[11px] font-bold text-ink-400 tnum">· {r.eta}</span>
+                    )}
+                  </div>
+
+                  <div className="text-[11px] font-bold text-ink-400 mt-0.5 tnum">{r.phone}</div>
+                  {r.memo && <div className="text-[11.5px] font-medium text-ink-500 mt-1.5">{r.memo}</div>}
+
+                  {r.status === 'upcoming' && (
+                    /* [a7] 로컬 상태만 바꾸던 것을 실제 API 로 바꿨다.
+                       '되돌리기'를 뺐다 — seated → upcoming 역방향 전이는 허용하지 않는다.
+                       손님이 이미 앉아 있는데 "아직 안 왔음"으로 되돌리는 건 실제로 없는 일이다. */
+                    <div className="flex gap-2 mt-3">
+                      <Button
+                        variant="ok" size="sm" full icon="check"
+                        onClick={() => void decideRes(r.id, 'seat')}
+                      >
+                        입장
+                      </Button>
+                      <Button
+                        variant="outline" size="sm" full
+                        onClick={() => void decideRes(r.id, 'cancel')}
+                      >
+                        취소
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </aside>
       </div>

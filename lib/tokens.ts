@@ -1,4 +1,4 @@
-import type { SlotView, TableStatus } from './types';
+import type { AdminResStatus, SlotView, TableStatus } from './types';
 
 /**
  * 상태 → 화면 표현 매핑
@@ -133,6 +133,37 @@ export const REJECT_REASONS = [
 /** 코드 → 문구. 모르는 코드가 와도 화면이 비지 않게 etc 로 떨어진다 */
 export const rejectReasonOf = (key?: string | null) =>
   REJECT_REASONS.find((r) => r.key === key) ?? REJECT_REASONS[REJECT_REASONS.length - 1];
+
+/**
+ * [b10] 관리자 화면의 예약 상태 표현.
+ *
+ * ★ 왜 토큰으로 빼는가
+ *   지금 홀 운영에 이렇게 박혀 있다 —
+ *     r.status === 'upcoming' ? r.eta : r.status === 'seated' ? '착석' : '미방문'
+ *   상태가 일곱으로 늘면 이 삼항이 여섯 단이 되고, 같은 판단이 대시보드·사이드바·
+ *   달력에도 흩어진다. 상태의 '말'은 한 곳에만 있어야 한다. (b8 의 SLOT_LOT 과 같은 이유)
+ *
+ * ★ 색을 아껴 쓴다
+ *   승인 대기만 눈에 띄게 둔다. 관리자가 이 화면에서 해야 하는 일이 그것뿐이다.
+ *   착석·방문 완료는 정상적으로 끝난 일이라 소리칠 이유가 없고, 취소·거절은
+ *   이미 지나간 일이라 회색이 맞다. 미방문만 경고색으로 남긴다.
+ */
+export const RES_ADMIN: Record<AdminResStatus, StatusToken> = {
+  pending:  { key: 'pending',  label: '승인 대기', short: '대기', icon: 'clock',
+              text: 'text-warn-600',  bg: 'bg-warn-50',  border: 'border-warn-300', hatch: '' },
+  upcoming: { key: 'upcoming', label: '도착 예정', short: '예정', icon: 'calendar',
+              text: 'text-brand-600', bg: 'bg-brand-50', border: 'border-brand-200', hatch: '' },
+  seated:   { key: 'seated',   label: '착석',      short: '착석', icon: 'people',
+              text: 'text-ok-600',    bg: 'bg-ok-50',    border: 'border-ok-200',   hatch: '' },
+  done:     { key: 'done',     label: '방문 완료', short: '완료', icon: 'check',
+              text: 'text-ink-500',   bg: 'bg-ink-50',   border: 'border-ink-200',  hatch: '' },
+  noshow:   { key: 'noshow',   label: '미방문',    short: '미방', icon: 'alert',
+              text: 'text-off-500',   bg: 'bg-off-50',   border: 'border-off-200',  hatch: '' },
+  canceled: { key: 'canceled', label: '취소됨',    short: '취소', icon: 'x',
+              text: 'text-ink-400',   bg: 'bg-ink-50',   border: 'border-ink-200',  hatch: '' },
+  rejected: { key: 'rejected', label: '거절함',    short: '거절', icon: 'ban',
+              text: 'text-ink-400',   bg: 'bg-ink-50',   border: 'border-ink-200',  hatch: '' },
+};
 
 /** 정리 중 → 빈 자리 자동 전환까지 걸리는 시간. 관리자가 버튼을 누르지 않아도 풀린다 */
 export const CLEAN_AUTO_MS = 40 * 1000;

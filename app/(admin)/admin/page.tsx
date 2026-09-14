@@ -35,12 +35,39 @@ export default function AdminDashboardPage() {
 
   const ss = seatStats(store);
   const ps = parkStats(store);
-  const upcoming = adminRes.filter((r) => r.status === 'upcoming');
-  const seated = adminRes.filter((r) => r.status === 'seated');
-  const noshow = adminRes.filter((r) => r.status === 'noshow');
+  /* [b10] '오늘 예약'과 '승인 대기'를 갈라 센다.
+     adminRes 에는 날짜와 무관한 pending 이 전부 들어 있다(a7 의 의도 — 내일 요청도
+     오늘 봐야 한다). 그런데 대시보드가 그걸 다 세는 바람에 다음 주 요청 3건이
+     '오늘 예약'을 3건 부풀렸다. 거기에 취소·거절까지 더해지고 있었다.
+
+     ★ 오늘 건수에서 취소·거절은 뺀다
+       카드의 숫자는 '오늘 몇 팀이 오는가'다. 거절한 예약은 오는 팀이 아니다.
+       미방문은 남긴다 — 자리를 잡아 뒀다가 안 온 것이라 오늘 일어난 일이 맞다. */
+  const pending = adminRes.filter((r) => r.status === 'pending');
+  const todayAll = adminRes.filter(
+    (r) => r.status !== 'pending' && r.status !== 'canceled' && r.status !== 'rejected',
+  );
+
+  const upcoming = todayAll.filter((r) => r.status === 'upcoming');
+  const seated = todayAll.filter((r) => r.status === 'seated');
+  const noshow = todayAll.filter((r) => r.status === 'noshow');
 
   // 조치가 필요한 일만 모은다
   const issues: { icon: string; tone: string; title: string; desc: string; go?: string }[] = [];
+
+    /* [b10] 승인 대기를 맨 위에 둔다.
+     여기 있던 넷(센서 오류·감지 흔들림·수동 지정·미방문)은 전부 '기계가 이상하다'였는데,
+     정작 사람이 답을 기다리고 있는 항목이 빠져 있었다. 관리자가 대시보드를 여는 이유는
+     "지금 뭐 할 일 있나"이고, 손님을 기다리게 하는 일보다 급한 건 없다. */
+  if (pending.length > 0) {
+    issues.push({
+      icon: 'clock', tone: 'warn',
+      title: `승인을 기다리는 예약이 ${pending.length}건 있어요`,
+      desc: '손님이 앱에서 답을 기다리는 중이에요. 승인하면 바로 알림이 갑니다.',
+      go: '/admin/hall',
+    });
+  }
+
   if (store.sensor === 'offline') {
     issues.push({
       icon: 'sensor-off', tone: 'busy',
@@ -78,7 +105,7 @@ export default function AdminDashboardPage() {
     <>
       <AdminTopbar
         title="대시보드"
-        sub={`${store.name} · 오늘 예약 ${adminRes.length}건`}
+        sub={`${store.name} · 오늘 예약 ${todayAll.length}건`}
         right={<div className="mr-2"><LiveStamp updated={store.tablesUpdated} /></div>}
       />
 
@@ -151,11 +178,18 @@ export default function AdminDashboardPage() {
           />
           <KPI
             label="오늘 예약"
-            value={adminRes.length}
+            value={todayAll.length}
             unit="건"
             icon="calendar"
             tone="brand"
-            sub={`도착 예정 ${upcoming.length} · 착석 ${seated.length}`}
+            /* [b10] 승인 대기는 오늘 건수와 성격이 다르다. 날짜도 다를 수 있고,
+               무엇보다 '이미 잡힌 예약'이 아니라 '내가 답해야 할 요청'이다.
+               같은 숫자에 섞으면 둘 다 뜻을 잃는다. */
+            sub={
+              pending.length > 0
+                ? `승인 대기 ${pending.length} · 도착 예정 ${upcoming.length}`
+                : `도착 예정 ${upcoming.length} · 착석 ${seated.length}`
+            }
             onClick={() => setCal(true)}
             actionLabel="예약 달력 보기"
           />
