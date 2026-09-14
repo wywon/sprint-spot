@@ -175,6 +175,11 @@ export const ADMIN_STORE_ID = 's1';
  *   주소로 /stores/s2 를 직접 열면 404 가 된다. 가린 매장이니 맞는 동작이다.
  *   관리자 콘솔은 영향이 없다 — ADMIN_STORE_ID(s1) 만 본다.
  *
- * 되살리려면 이 배열을 비우면 된다.
+ * ★ 지금은 비어 있다 (2026-09-14)
+ *   좌표를 서로 300m 이상 벌려서(prisma/fixcoords.ts) 라벨이 겹치던 문제를
+ *   해결했으므로 다시 켰다. 이름이 여전히 대흥동·은행동 시절 값이라는 문제는
+ *   남아 있다 — 그건 좌표가 아니라 이름을 바꿔야 하는 일이라 따로 정한다.
+ *
+ * 다시 가리려면 id 를 넣으면 된다.
  */
-export const HIDDEN_STORE_IDS: string[] = ['s2', 's3'];
+export const HIDDEN_STORE_IDS: string[] = [];

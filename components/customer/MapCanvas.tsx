@@ -63,8 +63,13 @@ const SHOW_COUNTS = false;
 /** 스프린트 식당(s1) — 실시간 공영주차장 세 곳이 만드는 삼각형의 내심 */
 export const DEMO_CENTER = { lat: 36.36572, lng: 127.43608 };
 
-/** 시연용 '내 위치'. s1 에서 남서쪽으로 약 130m */
-const ME_DEFAULT = { lat: 36.36485, lng: 127.43530 };
+/**
+ * 시연용 '내 위치'. s1 에서 남서쪽으로 약 130m
+ * [a8] 주차 탭의 '가까운 순' 이 같은 점을 기준으로 재도록 내보낸다.
+ *   지도에 찍힌 파란 점과 목록 순서가 다른 기준을 쓰면 손님이 먼저 알아챈다.
+ */
+export const MY_LOCATION = { lat: 36.36485, lng: 127.43530 };
+const ME_DEFAULT = MY_LOCATION;
 
 const SDK_URL = (key: string) =>
   `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${key}&autoload=false&libraries=services`;

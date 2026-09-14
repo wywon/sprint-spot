@@ -283,6 +283,24 @@ function metersBetween(aLat: number, aLng: number, bLat: number, bLng: number) {
   return Math.round(Math.hypot(dx, dy));
 }
 
+/**
+ * [a8] 기준점에서 대상까지 직선 거리(m). 좌표를 못 믿으면 null.
+ *
+ * metersBetween / realCoord 을 그대로 내보내지 않는 이유는,
+ * 쓰는 쪽마다 "좌표가 진짜인지" 를 각자 검사하게 되기 때문이다.
+ * 둘을 묶어 두면 판단이 한 곳에 남는다.
+ *
+ * null 은 '멀다' 가 아니라 '모른다' 이다. 0 으로 바꿔 쓰지 말 것 —
+ * 정렬에서 맨 앞으로 올라와 가장 가까운 곳인 척하게 된다.
+ */
+export function distFrom(
+  from: { lat: number; lng: number },
+  to: { lat?: number; lng?: number },
+): number | null {
+  if (!realCoord(to.lat, to.lng)) return null;
+  return metersBetween(from.lat, from.lng, to.lat!, to.lng!);
+}
+
 export function parkingOptions(store: PartnerStore | null, lots: PublicLot[]): ParkingOption[] {
   const own: ParkingOption[] = store
     ? [{
