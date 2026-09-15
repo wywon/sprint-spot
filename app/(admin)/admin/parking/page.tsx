@@ -236,10 +236,11 @@ export default function AdminParkingPage() {
             )}
 
             {/* 가로 스크롤 — 주차면 한 칸 크기를 유지한다 */}
-            <div className="rounded-2xl bg-ink-50 border border-ink-200 p-5 overflow-x-auto thin-sb">
+            {/* 배치도 자체가 노면 색 판이라 감싸는 회색 상자를 또 두면 상자 안 상자가 된다 */}
+            <div className="overflow-x-auto thin-sb">
               <SlotGrid
                 store={gridStore}
-                cell={64}
+                cell={92}
                 onSelect={(s) => (edit ? setEditSel(s.code) : setSel(s.code))}
                 selectedCode={edit ? editSel : sel}
               />
@@ -346,7 +347,7 @@ export default function AdminParkingPage() {
       {/* 전체화면 배치도 */}
       <Modal open={full} onClose={() => setFull(false)} title="주차장 배치도 · 전체화면" w="max-w-6xl">
         <div className="overflow-x-auto thin-sb">
-          <SlotGrid store={store} cell={78} onSelect={(s) => { setFull(false); setSel(s.code); }} />
+          <SlotGrid store={store} cell={110} onSelect={(s) => { setFull(false); setSel(s.code); }} />
         </div>
         <div className="mt-4"><SlotLegend /></div>
       </Modal>

@@ -40,6 +40,43 @@ export const SLOT: Record<SlotView, StatusToken> = {
                text: 'text-ok-600',    bg: 'bg-ok-50',    border: 'border-ok-200',    hatch: '' },
 };
 
+/**
+ * 주차면 — 배치도(노면) 위에서 쓰는 변형
+ * ─────────────────────────────────────────────────────────────
+ * ★ [b8] 배치도를 "위에서 내려다본 주차장"으로 그리면서 생긴 표다.
+ *   위의 SLOT 은 흰 카드 위에 얹는 값(연한 배경 + 진한 글자)이라, 칸을 색으로 꽉 채우는
+ *   배치도에 그대로 쓰면 진한 글자가 읽히지 않는다. 그래서 같은 상태를 "노면 위 표현"으로
+ *   한 번 더 정의한다. 색만 바꾸는 것이고 label · short · icon 은 위의 SLOT 것을 그대로 쓴다.
+ *   상태의 '말'은 한 곳에만 있어야 한다.
+ *
+ * ★ 색을 아껴 쓴다 — 주차 중은 회색이다.
+ *   주차 중은 정상 상태인데 빨강으로 칠하면 화면이 "문제가 생겼다"고 소리친다.
+ *   관리자가 실제로 찾는 건 '빈 칸'이므로 그쪽만 색으로 튀게 하고, 눈에 띄는 색은
+ *   손봐야 하는 상태(확인 중 · 센서 오류 · 수동 지정)에 남겨 둔다.
+ *
+ * ★ 글자는 흰색 하나로 고정이고, 칠은 흰 글자가 읽히는 명도까지만 밝힌다.
+ *   (배치도에는 주차면 번호만 얹히고 번호는 굵은 큰 글자라 3:1 이상이면 된다.
+ *    아래 값은 전부 3.8:1 이상이다. 더 밝히면 번호가 흐려진다.)
+ *
+ * ★ 접근성 — 빗금(hatch)을 빼지 말 것. 어두운 칠 위라 흰 빗금이고,
+ *   위의 hatch-* 가 아니라 globals.css 의 hatch-*-dk 를 쓴다.
+ */
+export interface LotToken {
+  fill: string;   // 칸을 채우는 색
+  text: string;   // 번호·아이콘
+  hatch: string;
+}
+
+export const SLOT_LOT: Record<SlotView, LotToken> = {
+  available: { fill: 'bg-[#0F9070]', text: 'text-white', hatch: '' },
+  occupied:  { fill: 'bg-[#7A8291]', text: 'text-white', hatch: 'hatch-dk' },
+  unknown:   { fill: 'bg-[#8271DA]', text: 'text-white', hatch: 'hatch-dk-rev' },
+  offline:   { fill: 'bg-[#5A6472]', text: 'text-white', hatch: 'hatch-dk' },
+  manual:    { fill: 'bg-[#9A6100]', text: 'text-white', hatch: '' },
+  disabled:  { fill: 'bg-[#2F63E4]', text: 'text-white', hatch: '' },
+  ev:        { fill: 'bg-[#0E7A5F]', text: 'text-white', hatch: '' },
+};
+
 /** 테이블 */
 export const TABLE: Record<TableStatus, StatusToken> = {
   available: { key: 'available', label: '빈 자리',   short: '빈자리', icon: 'check',
