@@ -788,8 +788,9 @@ function SetParking({ store }: { store: PartnerStore }) {
           </div>
         )}
 
-        <div className="rounded-2xl bg-ink-50 border border-ink-200 p-5 overflow-x-auto thin-sb">
-          <SlotGrid store={view} cell={62} onSelect={(x) => edit && setSel(x.code)} selectedCode={edit ? sel : null} />
+        {/* 배치도 자체가 노면 색 판이라 감싸는 회색 상자를 또 두면 상자 안 상자가 된다 */}
+            <div className="overflow-x-auto thin-sb">
+          <SlotGrid store={view} cell={84} onSelect={(x) => edit && setSel(x.code)} selectedCode={edit ? sel : null} />
         </div>
         <div className="mt-4"><SlotLegend /></div>
       </Card>

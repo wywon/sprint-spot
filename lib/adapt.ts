@@ -312,3 +312,29 @@ export function adaptResList(
   return [...(list.upcoming ?? []), ...(list.past ?? [])]
     .map((a) => adaptReservation(a, me, prev.get(a.id)));
 }
+
+/* ── [b9] 관리자 변경 로그 ──────────────────────────────────
+   GET /api/admin/logs 응답 → LogEntry.
+   시각 필드 이름이 at(DB) ↔ t(화면) 로 다르다. 그 차이를 여기서만 흡수한다.
+
+   ★ tone 을 검사해서 받는다
+     DB enum(LogTone)과 LogEntry['tone'] 유니온이 지금은 정확히 같지만,
+     둘은 다른 파일에 있어서 한쪽만 늘어나도 컴파일러가 안 잡아 준다.
+     모르는 값이 오면 화면이 색을 못 정해 점이 사라지므로 'ok' 로 떨어뜨린다. */
+
+const LOG_TONES = ['ok', 'warn', 'busy', 'brand', 'off'] as const;
+
+export interface ApiLogEntry {
+  id: string;
+  at: number;
+  who: string;
+  msg: string;
+  tone: string;
+}
+
+export function adaptLog(a: ApiLogEntry): LogEntry {
+  const tone = (LOG_TONES as readonly string[]).includes(a.tone)
+    ? (a.tone as LogEntry['tone'])
+    : 'ok';
+  return { t: a.at, who: a.who, msg: a.msg, tone };
+}

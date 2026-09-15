@@ -5,8 +5,8 @@ import { usePathname } from 'next/navigation';
 import { CLEAN_AUTO_MS, HIDDEN_STORE_IDS, rejectReasonOf } from './tokens';
 import { fmtDateK, rnd } from './format';
 import {
-  adaptAdminRes, adaptResList, adaptStore, adaptStoreDetail,
-  type ApiAdminRes, type ApiResList, type ApiStoreDetail, type ApiStoreListItem,
+  adaptAdminRes, adaptLog, adaptResList, adaptStore, adaptStoreDetail,
+  type ApiAdminRes, type ApiLogEntry, type ApiResList, type ApiStoreDetail, type ApiStoreListItem,
 } from './adapt';
 import {
   PARTNER_STORES, PUBLIC_LOTS, REVIEWS, ME
@@ -350,12 +350,9 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
       }))
     );
     setLots((prev) => prev.map((l) => ({ ...l, updated: now - rnd(40000, 210000) })));
-    setLog([
-      { t: now - 32000,  who: '센서',   msg: 'P9 감지값 불안정 — 확인 필요', tone: 'warn' },
-      { t: now - 140000, who: '센서',   msg: 'P4 주차 중 → 주차 가능', tone: 'ok' },
-      { t: now - 260000, who: '최영호', msg: 'P2 수동 지정 → 주차 가능', tone: 'warn' },
-      { t: now - 480000, who: '시스템', msg: '게이트웨이 재연결 완료', tone: 'ok' },
-    ]);
+    /* [b9] 하드코딩 로그 4줄을 걷어냈다.
+       관리자 화면에서는 아래 폴링이 GET /api/admin/logs 로 채운다.
+       손님 앱은 이 배열을 읽는 화면이 없으므로 빈 채로 둔다. */
     try {
       const saved = localStorage.getItem('spot.profile');
       if (saved) setProfile({ ...ME, ...JSON.parse(saved)});
@@ -486,13 +483,23 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
          *   예약만 못 읽었다고 배치도·주차면이 멈추면 안 되므로 catch 를 따로 둔다.
          */
         if (isAdminPath) {
-          try {
-            const rows = await getJSON<ApiAdminRes[]>('/api/admin/reservations');
-            if (!alive) return;
-            setAdminRes(rows.map(adaptAdminRes));
-          } catch (e) {
-            console.error('[poll:adminRes]', e);
-          }
+          /* [b9] 예약과 로그를 나란히 읽는다.
+             순서대로 await 하면 3초 주기에 왕복이 하나 더 얹혀 폴링이 밀린다.
+             하나가 실패해도 다른 하나는 살린다 — 로그를 못 읽었다고
+             예약 목록까지 멈추면 관리자가 승인을 못 누른다. */
+          const [resRows, logRows] = await Promise.all([
+            getJSON<ApiAdminRes[]>('/api/admin/reservations').catch((e) => {
+              console.error('[poll:adminRes]', e);
+              return null;
+            }),
+            getJSON<ApiLogEntry[]>('/api/admin/logs').catch((e) => {
+              console.error('[poll:log]', e);
+              return null;
+            }),
+          ]);
+          if (!alive) return;
+          if (resRows) setAdminRes(resRows.map(adaptAdminRes));
+          if (logRows) setLog(logRows.map(adaptLog));
         } else {
           /**
            * [a7] 손님 예약 목록.

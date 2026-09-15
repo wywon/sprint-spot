@@ -17,6 +17,16 @@ import type {
 
 /* ── 생성 헬퍼 ───────────────────────────────────────────── */
 
+/**
+ * 예약 달력용 한 달치 데이터.
+ * ★ Math.random 을 쓰지 않는다. 서버와 클라이언트가 다른 값을 만들면
+ *   Next.js 가 hydration mismatch 에러를 낸다. 그래서 인덱스 기반으로 결정한다.
+ *
+ * ★ [b9] 화면은 더 이상 이걸 읽지 않는다 (GET /api/admin/reservations?month=).
+ *   남아 있는 이유는 prisma/seed.ts 가 초기 DB 를 채울 때 쓰기 때문이다.
+ *   파일 정리는 5주차 chore/remove-mock 에서 prisma/seed-data.ts 로 옮기며 한다.
+ */
+
 interface SlotRow {
   zone: string;
   codes: string[];
