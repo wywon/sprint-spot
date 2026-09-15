@@ -3,6 +3,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { CLEAN_AUTO_MS, HIDDEN_STORE_IDS, rejectReasonOf } from './tokens';
+import { KEY_FAVORITES, KEY_SEARCHES, readList, writeList } from './persist';
 import { fmtDateK, rnd } from './format';
 import {
   adaptAdminRes, adaptResList, adaptStore, adaptStoreDetail,
@@ -299,8 +300,40 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
    */
   const [adminRes, setAdminRes] = useState<AdminReservation[]>([]);
   const [reviews, setReviews] = useState<Review[]>(REVIEWS);
-  const [favorites, setFav] = useState<string[]>(['s1']);
-  const [recent, setRecent] = useState<string[]>(['대흥동 손칼국수', '두부두루치기', '으능정이 주차장', '소제동 브런치']);
+  /**
+   * [a8] 즐겨찾기와 최근 검색어를 localStorage 에 남긴다.
+   * ─────────────────────────────────────────────────────────
+   * 예전에는 둘 다 메모리에만 있었다. 별표를 눌러도 새로고침하면 s1 하나로
+   * 되돌아갔고, 최근 검색어는 지어낸 네 개(이제 존재하지도 않는 매장 이름)로
+   * 리셋됐다. '전체 삭제'를 눌러도 다시 나타나니, 지워지지 않는 기록이었다.
+   *
+   * ★ 첫 값은 반드시 빈 배열이어야 한다
+   *   서버 렌더에는 localStorage 가 없다. 첫 렌더에서 읽으면 서버 결과와
+   *   브라우저 결과가 달라져 Hydration 오류가 난다. 그래서 빈 배열로 시작하고
+   *   마운트 뒤에 채운다. 목업 timestamp 를 0 으로 두는 것과 같은 이유다.
+   *
+   * ★ 미리 넣어 두는 값이 없다
+   *   예전 기본값 ['s1'] 은 '내가 별표를 누른 적 없는데 별이 켜져 있는' 상태였다.
+   *   시연에서 즐겨찾기를 보여주려면 한 번 누르면 된다. 이제 남는다.
+   */
+  const [favorites, setFav] = useState<string[]>([]);
+  const [recent, setRecent] = useState<string[]>([]);
+  /** 불러오기 전에 저장하면 빈 배열로 기존 기록을 지운다. 그걸 막는 빗장 */
+  const storeLoaded = useRef(false);
+
+  useEffect(() => {
+    setFav(readList(KEY_FAVORITES));
+    setRecent(readList(KEY_SEARCHES, 6));
+    storeLoaded.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (storeLoaded.current) writeList(KEY_FAVORITES, favorites);
+  }, [favorites]);
+
+  useEffect(() => {
+    if (storeLoaded.current) writeList(KEY_SEARCHES, recent, 6);
+  }, [recent]);
   const [simOn, setSimOn] = useState(true);   // [C15] 이제 '실시간 갱신 켜기' 를 뜻한다
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [log, setLog] = useState<LogEntry[]>([]);

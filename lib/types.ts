@@ -110,6 +110,21 @@ export interface PartnerStore {
   };
   /** 서버 집계. 목업일 때는 없다(undefined) */
   agg?: StoreAgg;
+  /**
+   * [a8] 대표 메뉴. 상세 응답에만 들어 있어 목록만 받은 시점에는 undefined 다.
+   *   undefined = 아직 모른다 / [] = 등록된 메뉴가 없다.
+   *   둘을 같게 쓰면 불러오는 중에 '메뉴 없음' 이 번쩍인다.
+   */
+  menus?: MenuItem[];
+}
+
+/** 대표 메뉴 한 줄 */
+export interface MenuItem {
+  id: string;
+  name: string;
+  /** 원 단위 숫자. 표시용 콤마는 화면에서 붙인다 */
+  price: number;
+  signature: boolean;
 }
 
 /** 미입점 식당 — 지도에 상호명만 뜨고 예약 버튼이 비활성이다 */

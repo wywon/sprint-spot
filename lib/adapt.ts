@@ -65,6 +65,16 @@ export interface ApiStoreDetail extends ApiStoreListItem {
   phone?: string;
   tables?: ApiTable[];
   parking?: ApiStoreListItem['parking'] & { slots?: ApiSlot[] };
+  menus?: ApiMenu[];
+}
+
+/** GET /api/stores/[id] 의 menus 한 줄 */
+export interface ApiMenu {
+  id: string;
+  name: string;
+  price: number;
+  image?: string;
+  signature?: boolean;
 }
 
 /* ── 매장 (목록) ───────────────────────────────────────────── */
@@ -96,6 +106,9 @@ export function adaptStore(a: ApiStoreListItem, prev?: PartnerStore): PartnerSto
     sensor: a.parking?.sensor ?? prev?.sensor ?? 'online',
     tables: prev?.tables ?? [],
     tablesUpdated: Date.now(),
+    // 목록 응답에는 메뉴가 없다. 상세에서 받아 둔 것을 지우지 않는다 —
+    // 지우면 3초마다 메뉴 칸이 비었다 채워졌다 한다.
+    menus: prev?.menus,
     parking: {
       fee: a.parking?.fee ?? prev?.parking.fee ?? '',
       slots: prev?.parking.slots ?? [],
@@ -126,6 +139,15 @@ export function adaptStoreDetail(a: ApiStoreDetail, prev?: PartnerStore): Partne
       ...base.parking,
       slots: (a.parking?.slots ?? []).map((s) => adaptSlot(s, prevSlots.get(s.code))),
     },
+    /* [a8] 서버는 진작부터 매장별 메뉴를 내려주고 있었는데 여기서 버리고 있었다.
+       그래서 화면이 lib/mock.ts 의 공용 MENUS 6개를 그렸고,
+       어느 매장을 열어도 같은 메뉴가 나왔다. */
+    menus: (a.menus ?? []).map((m) => ({
+      id: m.id,
+      name: m.name,
+      price: m.price,
+      signature: Boolean(m.signature),
+    })),
   };
 }
 
