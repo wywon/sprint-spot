@@ -6,12 +6,11 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Icon } from '@/components/ui/Icon';
 import { Chip } from '@/components/ui/primitives';
 import {
-  MapCanvas, LotMarker, PartnerMarker, PlainMarker, MeMarker,
+  MapCanvas, LotMarker, PartnerMarker, MeMarker,
   DEMO_CENTER, distM, type FitPoint,
 } from '@/components/customer/MapCanvas';
 import { StoreCard, LotCard } from '@/components/customer/Cards';
 import { cx } from '@/lib/format';
-import { PLAIN_STORES } from '@/lib/mock';
 import { useApp } from '@/lib/store';
 
 /**
@@ -23,6 +22,18 @@ import { useApp } from '@/lib/store';
  *   목록은 지도를 가리지 않도록 하단 시트로 겹쳐 올린다.
  *
  * ★ 검색창은 absolute 로 지도 위에 띄운다. 지도 높이를 깎지 않기 위해서다.
+ *
+ * [a8] 미입점 매장 마커(PlainMarker)를 걷어냈다.
+ *   카카오맵 타일에는 이미 주변 상호명이 인쇄돼 있다. 그 위에 회색 알약으로
+ *   같은 이름을 또 얹으면 라벨이 이중으로 보이고, 무엇보다 그 여섯 곳은
+ *   실제로 존재하지 않는 가게였다(대흥동 시절 이름이 송촌동 좌표에 얹혀 있었다).
+ *
+ *   지도에서 우리가 얹어야 할 것은 카카오가 모르는 정보뿐이다.
+ *   좌석·주차 상태(입점 매장)와 실시간 잔여 대수(공영주차장).
+ *   색이 있는 표시는 SPOT 이 아는 곳, 배경 글씨는 그냥 있는 가게 —
+ *   이 대비가 선명할수록 우리가 무엇을 하는 서비스인지 빨리 읽힌다.
+ *
+ *   미입점 가게의 기본 정보는 검색 화면에서 카카오 장소 검색으로 제공한다.
  *
  * URL 파라미터로 상태를 받는다 (다른 화면에서 돌아올 때 필터/초점을 복원하기 위함)
  *   ?filter=food|lot|all   ?focus=<id>   ?q=<검색어>
@@ -135,7 +146,6 @@ function ExploreView() {
         {showLots && lots.map((l) => (
           <LotMarker key={l.id} lot={l} on={sel === l.id} onClick={() => setSel(l.id)} />
         ))}
-        {showFood && PLAIN_STORES.map((s) => <PlainMarker key={s.id} store={s} />)}
         {showFood && stores.map((s) => (
           <PartnerMarker key={s.id} store={s} on={sel === s.id} onClick={() => setSel(s.id)} />
         ))}

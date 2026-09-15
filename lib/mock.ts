@@ -17,6 +17,16 @@ import type {
 
 /* ── 생성 헬퍼 ───────────────────────────────────────────── */
 
+/**
+ * 예약 달력용 한 달치 데이터.
+ * ★ Math.random 을 쓰지 않는다. 서버와 클라이언트가 다른 값을 만들면
+ *   Next.js 가 hydration mismatch 에러를 낸다. 그래서 인덱스 기반으로 결정한다.
+ *
+ * ★ [b9] 화면은 더 이상 이걸 읽지 않는다 (GET /api/admin/reservations?month=).
+ *   남아 있는 이유는 prisma/seed.ts 가 초기 DB 를 채울 때 쓰기 때문이다.
+ *   파일 정리는 5주차 chore/remove-mock 에서 prisma/seed-data.ts 로 옮기며 한다.
+ */
+
 interface SlotRow {
   zone: string;
   codes: string[];
@@ -115,10 +125,10 @@ export const PARTNER_STORES: PartnerStore[] = [
     },
   },
   {
-    id: 's2', partner: true, name: '은행동 두부두루치기', cat: '한식 · 향토음식', addr: '대전 중구 은행동 145',
-    tel: '042-253-8080', open: '11:00 - 22:00', price: '12,000~18,000원', rating: 4.7, reviews: 3820,
-    tags: ['대전 향토음식', '단체석', '주차 가능'], hero: 'from-amber-300 via-orange-400 to-red-500',
-    lat: 36.36540, lng: 127.43780, sensor: 'online', tablesUpdated: 0,
+    id: 's2', partner: true, name: '레스토랑 송촌', cat: '양식 · 레스토랑', addr: '대전 대덕구 송촌북로 32',
+    tel: '042-625-8080', open: '11:00 - 22:00', price: '14,000~26,000원', rating: 4.7, reviews: 3820,
+    tags: ['단체석', '주차 가능', '예약 권장'], hero: 'from-amber-300 via-orange-400 to-red-500',
+    lat: 36.36347, lng: 127.43790, sensor: 'online', tablesUpdated: 0,   // [a8] 남동 298m · 송촌동
     tables: mkTables([
       { id: 't1', seats: 2, status: 'available', row: 0, col: 0 },
       { id: 't2', seats: 4, status: 'occupied', row: 0, col: 1, guest: 4, since: '12:31' },
@@ -140,10 +150,10 @@ export const PARTNER_STORES: PartnerStore[] = [
   {
     // ★ 센서가 죽어 있는 매장. "정상 케이스만 만들다가 예외를 나중에 붙이는" 실수를 막으려고
     //   일부러 처음부터 offline 매장을 하나 넣어 뒀다. 화면 만들 때 이 매장으로도 꼭 확인할 것.
-    id: 's3', partner: true, name: '소제동 브런치하우스', cat: '브런치 · 카페', addr: '대전 동구 소제동 89',
-    tel: '042-631-2200', open: '09:30 - 18:00', price: '12,000~19,000원', rating: 4.5, reviews: 1580,
-    tags: ['카페거리', '예약 권장', '주차 가능'], hero: 'from-lime-200 via-emerald-300 to-teal-400',
-    lat: 36.36640, lng: 127.43700, sensor: 'offline', tablesUpdated: 0,
+    id: 's3', partner: true, name: '법동 카페', cat: '카페 · 브런치', addr: '대전 대덕구 계족로664번길 21',
+    tel: '042-633-2200', open: '09:30 - 18:00', price: '6,000~15,000원', rating: 4.5, reviews: 1580,
+    tags: ['브런치', '예약 권장', '주차 가능'], hero: 'from-lime-200 via-emerald-300 to-teal-400',
+    lat: 36.36990, lng: 127.43520, sensor: 'offline', tablesUpdated: 0,  // [a8] 북 471m · 법동
     tables: mkTables([
       { id: 't1', seats: 2, status: 'available', row: 0, col: 0 },
       { id: 't2', seats: 2, status: 'available', row: 0, col: 1 },

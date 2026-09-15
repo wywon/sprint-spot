@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { Button, Card, Segmented } from '@/components/ui/primitives';
-import { cx } from '@/lib/format';
+import { cx, fmtDateK, resAt, untilText } from '@/lib/format';
 // import { ME } from '@/lib/mock';
-import { useApp } from '@/lib/store';
+import { isLiveRes } from '@/lib/types';
+import { useApp, useNow } from '@/lib/store';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
@@ -22,10 +23,32 @@ import Link from 'next/link';
  *   주차 자리 수는 계속 바뀌므로 알림으로 보내면 소음이 된다.
  */
 export default function MyPage() {
-  const { reservations, simOn, setSimOn, profile } = useApp();
+  const { reservations, simOn, setSimOn, profile, getStore } = useApp();
   const router = useRouter();
+  /* 분 단위면 충분하다 */
+  const now = useNow(60_000);
 
-  const upcoming = reservations.filter((r) => r.status === 'upcoming').length;
+  /**
+   * [a8] 가장 가까운 다가오는 예약.
+   * ─────────────────────────────────────────────────────────
+   * 예전에는 아래 알림 카드에 '대흥동 손칼국수 예약 1시간 42분 남았어요' 가
+   * 글자로 박혀 있었다. 예약이 없어도 떴고, 새로고침해도 영원히 1시간 42분이었으며,
+   * 매장 이름은 이제 존재하지도 않는다(s1 은 '스프린트 식당' 으로 바뀌었다).
+   *
+   * now 가 0 이면 아직 마운트 전이다. 그때 Date.now() 를 부르면 서버 렌더와
+   * 어긋나므로 계산하지 않고 자리만 잡아 둔다.
+   */
+  const nextRes = useMemo(() => {
+    if (!now) return undefined;          // 아직 모른다
+    return reservations
+      .filter((r) => isLiveRes(r.status))
+      .map((r) => ({ r, at: resAt(r.date, r.time).getTime() }))
+      .filter((x) => x.at >= now)
+      .sort((a, b) => a.at - b.at)[0] ?? null;   // null = 없다
+  }, [reservations, now]);
+
+  /* [a7] 승인 대기도 '다가오는 예약'에 포함한다 */
+  const upcoming = reservations.filter((r) => isLiveRes(r.status)).length;
   const visits = reservations.filter((r) => r.status === 'done').length;
   const written = reservations.filter((r) => r.reviewed).length;
 
@@ -80,18 +103,51 @@ export default function MyPage() {
 
         {/* 알림 — 예약 기준 */}
         <Card className="p-4">
-          <div className="text-[13px] font-extrabold text-ink-900 mb-3">알림</div>
-          <div className="rounded-xl bg-brand-50 border border-brand-100 px-3.5 py-3 flex items-start gap-2.5">
-            <Icon n="bell" s={17} cls="text-brand-600 shrink-0 mt-0.5" />
-            <div>
-              <div className="text-[12.5px] font-extrabold text-brand-800">
-                대흥동 손칼국수 예약 <span className="tnum">1시간 42분</span> 남았어요
-              </div>
-              <div className="text-[11.5px] font-medium text-brand-800/75 mt-0.5">
-                출발하실 시간이 되면 다시 알려드릴게요
+          <div className="text-[13px] font-extrabold text-ink-900 mb-3">다가오는 예약</div>
+
+          {nextRes === undefined ? (
+            /* 마운트 전 한 프레임 — 카드 높이가 튀지 않게 자리만 잡는다 */
+            <div className="h-[62px] rounded-xl bg-ink-100 animate-pulse" />
+          ) : nextRes === null ? (
+            <div className="rounded-xl bg-ink-50 border border-ink-200 px-3.5 py-3 flex items-start gap-2.5">
+              <Icon n="calendar" s={17} cls="text-ink-400 shrink-0 mt-0.5" />
+              <div>
+                <div className="text-[12.5px] font-extrabold text-ink-700">다가오는 예약이 없어요</div>
+                <div className="text-[11.5px] font-medium text-ink-500 mt-0.5">
+                  예약하시면 남은 시간을 여기에서 알려드릴게요
+                </div>
+                <Link href="/explore" className="inline-block text-[11.5px] font-extrabold text-brand-700 underline underline-offset-2 mt-1.5">
+                  매장 둘러보기
+                </Link>
               </div>
             </div>
-          </div>
+          ) : (
+            <Link
+              href={`/reservations/${nextRes.r.id}`}
+              className="block rounded-xl bg-brand-50 border border-brand-100 px-3.5 py-3 active:scale-[.99] transition-transform"
+            >
+              <div className="flex items-start gap-2.5">
+                <Icon n="bell" s={17} cls="text-brand-600 shrink-0 mt-0.5" />
+                <div className="grow min-w-0">
+                  <div className="text-[12.5px] font-extrabold text-brand-800">
+                    {nextRes.r.status === 'pending' ? (
+                      <>{getStore(nextRes.r.storeId)?.name ?? '매장'} 예약을 확인하고 있어요</>
+                    ) : (
+                      <>
+                        {getStore(nextRes.r.storeId)?.name ?? '매장'} 예약{' '}
+                        <span className="tnum">{untilText(nextRes.at - now)}</span> 남았어요
+                      </>
+                    )}
+                  </div>
+                  <div className="text-[11.5px] font-medium text-brand-800/75 mt-0.5">
+                    {fmtDateK(nextRes.r.date)} {nextRes.r.time} · {nextRes.r.party}명
+                    {nextRes.r.status === 'pending' && ' · 매장 확인 대기 중'}
+                  </div>
+                </div>
+                <Icon n="chevR" s={16} cls="text-brand-600 shrink-0 mt-0.5" />
+              </div>
+            </Link>
+          )}
         </Card>
 
         {/* 배치만 — 4주차 이후 채운다 */}

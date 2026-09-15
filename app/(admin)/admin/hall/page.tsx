@@ -7,9 +7,9 @@ import { ConfirmModal } from '@/components/ui/overlays';
 import { AdminTopbar } from '@/components/admin/Sidebar';
 import { TableMap } from '@/components/admin/TableMap';
 import { cx } from '@/lib/format';
-import { ADMIN_STORE_ID, TABLE } from '@/lib/tokens';
+import { ADMIN_STORE_ID, REJECT_REASONS, RES_ADMIN, TABLE } from '@/lib/tokens';
 import { useApp } from '@/lib/store';
-import type { StoreTable } from '@/lib/types';
+import { isOpenAdminRes, type AdminReservation, type RejectReasonCode, type StoreTable } from '@/lib/types';
 
 /**
  * 홀 운영
@@ -30,9 +30,17 @@ import type { StoreTable } from '@/lib/types';
  *   모든 것에 모달을 띄우면 관리자가 확인 버튼을 기계적으로 누르게 되어 오히려 위험하다.
  */
 export default function AdminHallPage() {
-  const { getStore, setTable, adminRes, setAdminRes, pushToast } = useApp();
+  const { getStore, setTable, adminRes, decideRes, pushToast } = useApp();
   const [sel, setSel] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<null | { type: 'disable' | 'cancelRes'; table: StoreTable }>(null);
+  /** [a7] 거절 사유를 고르는 중인 예약 */
+  const [rejecting, setRejecting] = useState<AdminReservation | null>(null);
+
+  /* [a7] 승인 대기를 따로 뽑는다.
+     관리자가 이 화면에서 해야 하는 일 중 '기다리는 손님에게 답하기'가 가장 급하다.
+     오늘 예약 목록에 섞어 두면 시간 순 어딘가에 묻힌다. */
+  const pending = adminRes.filter((r) => r.status === 'pending');
+  const todayRes = adminRes.filter((r) => r.status !== 'pending');
 
   const store = getStore(ADMIN_STORE_ID);
   if (!store) return null;
@@ -158,9 +166,12 @@ export default function AdminHallPage() {
           <div className="p-5 border-b border-ink-200">
             <div className="text-[14px] font-extrabold text-ink-900">오늘 예약</div>
             <div className="text-[11.5px] font-bold text-ink-500 mt-1 tnum">
-              도착 예정 {adminRes.filter((r) => r.status === 'upcoming').length} ·
-              착석 {adminRes.filter((r) => r.status === 'seated').length} ·
-              미방문 {adminRes.filter((r) => r.status === 'noshow').length}
+              {/* [b10] 아직 처리할 예약과 끝난 예약을 갈라 센다.
+                  전에는 도착 예정·착석·미방문 셋만 세서, 거절·취소한 건이 목록엔
+                  보이는데 요약엔 없었다. 숫자와 카드 수가 안 맞으면 둘 다 못 믿는다. */}
+              도착 예정 {todayRes.filter((r) => r.status === 'upcoming').length} ·
+              착석 {todayRes.filter((r) => r.status === 'seated').length} ·
+              종료 {todayRes.filter((r) => !isOpenAdminRes(r.status)).length}
             </div>
           </div>
 
@@ -171,58 +182,185 @@ export default function AdminHallPage() {
             </div>
           </div>
 
-          <div className="p-4 space-y-2">
-            {adminRes.map((r) => (
-              <div
-                key={r.id}
-                className={cx(
-                  'p-3.5 rounded-xl border',
-                  r.status === 'noshow' ? 'border-ink-200 bg-ink-50 opacity-70' : 'border-ink-200 bg-white'
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-[14px] font-extrabold text-brand-700 tnum shrink-0">{r.time}</span>
-                  <span className="text-[13px] font-extrabold text-ink-900 grow truncate">{r.name}</span>
-                  <span className="text-[11.5px] font-extrabold text-ink-500 tnum shrink-0">{r.party}명</span>
-                </div>
-
-                <div className="text-[11px] font-bold text-ink-400 mt-1 tnum">
-                  {r.phone} · {r.status === 'upcoming' ? r.eta : r.status === 'seated' ? '착석' : '미방문'}
-                </div>
-                {r.memo && <div className="text-[11.5px] font-medium text-ink-500 mt-1.5">{r.memo}</div>}
-
-                {r.status === 'upcoming' && (
-                  <div className="flex gap-2 mt-3">
-                    <Button
-                      variant="ok" size="sm" full icon="check"
-                      onClick={() => {
-                        setAdminRes((p) => p.map((x) => (x.id === r.id ? { ...x, status: 'seated' as const, eta: '-' } : x)));
-                        pushToast({ title: `${r.name} 입장 처리`, tone: 'ok', icon: 'check' });
-                      }}
-                    >
-                      입장
-                    </Button>
-                    {/* 노쇼 → 취소 */}
-                    <Button
-                      variant="outline" size="sm" full
-                      onClick={() => {
-                        setAdminRes((p) => p.map((x) => (x.id === r.id ? { ...x, status: 'noshow' as const, eta: '-' } : x)));
-                        pushToast({
-                          title: `${r.name} 예약 취소`, tone: 'busy', icon: 'x',
-                          actionLabel: '되돌리기',
-                          onAction: () => setAdminRes((p) => p.map((x) => (x.id === r.id ? { ...x, status: 'upcoming' as const, eta: r.eta } : x))),
-                        });
-                      }}
-                    >
-                      취소
-                    </Button>
-                  </div>
-                )}
+          {/* ── 승인 대기 ─────────────────────────────────────
+              손님이 지금 이 순간 답을 기다리고 있다. 맨 위에 둔다. */}
+          {pending.length > 0 && (
+            <div className="border-b border-ink-200 bg-warn-50/40">
+              <div className="px-5 pt-4 pb-2 flex items-center gap-2">
+                <span className="w-5 h-5 rounded-full bg-warn-500 text-white grid place-items-center">
+                  <Icon n="clock" s={12} />
+                </span>
+                <span className="text-[13px] font-extrabold text-ink-900">
+                  승인 대기 {pending.length}건
+                </span>
               </div>
-            ))}
+              <div className="px-4 pb-2 text-[11px] font-medium text-ink-500 leading-relaxed">
+                승인하면 손님 앱에 바로 알림이 가요. 오늘이 아닌 날짜도 여기 모입니다.
+              </div>
+
+              <div className="p-4 pt-1 space-y-2">
+                {pending.map((r) => (
+                  <div key={r.id} className="p-3.5 rounded-xl border-2 border-warn-300 bg-white">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[14px] font-extrabold text-warn-700 tnum shrink-0">{r.time}</span>
+                      <span className="text-[13px] font-extrabold text-ink-900 grow truncate">{r.name}</span>
+                      <span className="text-[11.5px] font-extrabold text-ink-500 tnum shrink-0">{r.party}명</span>
+                    </div>
+
+                    {/* 승인 여부를 판단하려면 날짜·좌석 유형·요청사항이 다 보여야 한다 */}
+                    <div className="text-[11px] font-bold text-ink-400 mt-1 tnum">
+                      {r.date} · {r.eta} · {r.seatType}
+                    </div>
+                    <div className="text-[11px] font-bold text-ink-400 mt-0.5 tnum">{r.phone}</div>
+                    {r.memo && (
+                      <div className="text-[11.5px] font-medium text-ink-700 mt-2 p-2 rounded-lg bg-ink-50 leading-relaxed">
+                        {r.memo}
+                      </div>
+                    )}
+
+                    <div className="flex gap-2 mt-3">
+                      <Button
+                        variant="ok" size="sm" full icon="check"
+                        onClick={() => void decideRes(r.id, 'approve')}
+                      >
+                        승인
+                      </Button>
+                      <Button variant="outline" size="sm" full onClick={() => setRejecting(r)}>
+                        거절
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="p-4 space-y-2">
+            {todayRes.length === 0 && pending.length === 0 && (
+              <div className="py-10 text-center text-[12px] font-bold text-ink-400">
+                오늘 예약이 없어요
+              </div>
+            )}
+            {todayRes.map((r) => {
+              /* [b10] 상태의 '말'과 색을 lib/tokens.ts 에서 가져온다.
+                 전에는 여기 삼항이 박혀 있었다 —
+                   r.status === 'upcoming' ? r.eta : r.status === 'seated' ? '착석' : '미방문'
+                 else 가 '미방문'이라 거절·취소·방문 완료가 전부 미방문으로 보였다.
+                 타입을 넓혀도 컴파일러가 못 잡는 모양이라(else 가 다 받는다)
+                 표 조회로 바꾼다. 상태가 또 늘면 Record 가 컴파일 에러로 잡아 준다. */
+              const st = RES_ADMIN[r.status];
+              const open = isOpenAdminRes(r.status);
+              return (
+                <div
+                  key={r.id}
+                  className={cx(
+                    'p-3.5 rounded-xl border',
+                    // 끝난 예약은 눌러 둔다. 관리자가 찾는 건 아직 남은 일이다
+                    open ? 'border-ink-200 bg-white' : 'border-ink-200 bg-ink-50 opacity-70'
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-[14px] font-extrabold text-brand-700 tnum shrink-0">{r.time}</span>
+                    <span className="text-[13px] font-extrabold text-ink-900 grow truncate">{r.name}</span>
+                    <span className="text-[11.5px] font-extrabold text-ink-500 tnum shrink-0">{r.party}명</span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <span className={cx('inline-flex items-center gap-1 text-[11px] font-extrabold', st.text)}>
+                      <Icon n={st.icon} s={11} />
+                      {st.label}
+                    </span>
+                    {/* 도착 예정일 때만 '8분 후'가 의미 있다. 끝난 예약에는 '-' 가 들어온다 */}
+                    {r.status === 'upcoming' && (
+                      <span className="text-[11px] font-bold text-ink-400 tnum">· {r.eta}</span>
+                    )}
+                  </div>
+
+                  <div className="text-[11px] font-bold text-ink-400 mt-0.5 tnum">{r.phone}</div>
+                  {r.memo && <div className="text-[11.5px] font-medium text-ink-500 mt-1.5">{r.memo}</div>}
+
+                  {r.status === 'upcoming' && (
+                    /* [a7] 로컬 상태만 바꾸던 것을 실제 API 로 바꿨다.
+                       '되돌리기'를 뺐다 — seated → upcoming 역방향 전이는 허용하지 않는다.
+                       손님이 이미 앉아 있는데 "아직 안 왔음"으로 되돌리는 건 실제로 없는 일이다. */
+                    <div className="flex gap-2 mt-3">
+                      <Button
+                        variant="ok" size="sm" full icon="check"
+                        onClick={() => void decideRes(r.id, 'seat')}
+                      >
+                        입장
+                      </Button>
+                      <Button
+                        variant="outline" size="sm" full
+                        onClick={() => void decideRes(r.id, 'cancel')}
+                      >
+                        취소
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </aside>
       </div>
+
+      {/* ── 거절 사유 고르기 ───────────────────────────────
+          ★ 사유를 반드시 고르게 한다
+            "거절되었습니다" 한 줄만 가면 손님은 다음에 뭘 해야 할지 모른다.
+            사유마다 다음 행동이 다르다 — 자리가 없으면 다른 시간,
+            인원이 문제면 인원 조정, 휴무면 다른 날짜다.
+          ★ 한 번에 끝내고 확인 모달을 겹치지 않는다
+            사유를 고르는 행위 자체가 확인이다. 모달을 두 번 띄우면
+            관리자는 두 번째를 기계적으로 누르게 된다. */}
+      {rejecting && (
+        <div
+          className="fixed inset-0 z-50 bg-ink-900/40 grid place-items-center p-6"
+          onClick={() => setRejecting(null)}
+        >
+          <div
+            className="w-[420px] max-w-full bg-white rounded-2xl shadow-pop overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 pt-5 pb-3">
+              <div className="text-[16px] font-extrabold text-ink-900">
+                이 예약을 받기 어려우신가요?
+              </div>
+              <div className="text-[12px] font-bold text-ink-500 mt-1 tnum">
+                {rejecting.date} {rejecting.time} · {rejecting.name}님 {rejecting.party}명
+              </div>
+              <div className="text-[11.5px] font-medium text-ink-500 mt-2 leading-relaxed">
+                고르신 사유에 맞는 안내가 손님 앱으로 전달돼요.
+              </div>
+            </div>
+
+            <div className="px-5 pb-2 space-y-1.5">
+              {REJECT_REASONS.map((o) => (
+                <button
+                  key={o.key}
+                  className="w-full text-left px-3.5 py-3 rounded-xl border border-ink-200 hover:bg-ink-50 active:scale-[.99] transition-transform"
+                  onClick={() => {
+                    const target = rejecting;
+                    setRejecting(null);
+                    void decideRes(target.id, 'reject', o.key as RejectReasonCode);
+                  }}
+                >
+                  <div className="text-[13px] font-extrabold text-ink-900">{o.admin}</div>
+                  <div className="text-[11.5px] font-medium text-ink-500 mt-0.5 leading-snug">
+                    손님에게 — {o.title}
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            <div className="px-5 py-3 border-t border-ink-100">
+              <Button variant="ghost" size="sm" full onClick={() => setRejecting(null)}>
+                닫기
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmModal
         open={!!confirm}

@@ -10,7 +10,6 @@ import { SubHeader, StickyCta } from '@/components/customer/Shell';
 import { FoodTile } from '@/components/customer/Cards';
 import { cx } from '@/lib/format';
 import { levelOf, lotStats } from '@/lib/status';
-import { findAny } from '@/lib/mock';
 import { useApp } from '@/lib/store';
 
 /**
@@ -26,7 +25,7 @@ import { useApp } from '@/lib/store';
  */
 export default function LotDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { getLot } = useApp();
+  const { getLot, getStore } = useApp();
   const [nav, setNav] = useState(false);
 
   const lot = getLot(id);
@@ -133,8 +132,17 @@ export default function LotDetailPage({ params }: { params: Promise<{ id: string
               </Link>
             </div>
             <div className="flex gap-3 overflow-x-auto no-sb -mx-4 px-4 pb-1">
+              {/* [a8] 목업(findAny)이 아니라 실시간 매장 데이터를 쓴다.
+                  예전에는 lib/mock.ts 에서 꺼내서 s1 이 아직 '대흥동 손칼국수' 로 떴다.
+                  눌러 들어간 상세는 useApp() 을 쓰니 '스프린트 식당' 이 나와서
+                  한 화면 안에서 두 출처가 서로 다른 이름을 말했다.
+                  좌석·주차도 옛 값이라 타일의 '예약 가능' 이 늘 켜져 있었다.
+
+                  찾지 못한 id 는 그리지 않는다. 가려 둔 매장(s2·s3)이나
+                  미입점 id 가 near 에 남아 있을 수 있는데, 없는 매장을
+                  그럴듯하게 채우느니 안 보여 주는 편이 맞다. */}
               {lot.near.map(([sid, dist]) => {
-                const s = findAny(sid);
+                const s = getStore(sid);
                 if (!s) return null;
                 return <FoodTile key={sid} store={s} distM={dist} />;
               })}

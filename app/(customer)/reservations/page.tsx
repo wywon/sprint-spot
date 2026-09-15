@@ -1,12 +1,14 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Icon } from '@/components/ui/Icon';
 import { Badge, Segmented, Empty, Button } from '@/components/ui/primitives';
-import { cx, fmtDateK } from '@/lib/format';
+import { cx, fmtDateK, resAt } from '@/lib/format';
 import { useApp } from '@/lib/store';
+import { isLiveRes } from '@/lib/types';
 import type { Reservation } from '@/lib/types';
+import { rejectReasonOf } from '@/lib/tokens';
 
 /**
  * 예약 탭 — 다가오는 예약 / 지난 예약
@@ -19,9 +21,33 @@ export default function ReservationsPage() {
   const { reservations, getStore } = useApp();
   const [tab, setTab] = useState<'upcoming' | 'done'>('upcoming');
 
-  const list = reservations.filter((r) =>
-    tab === 'upcoming' ? r.status === 'upcoming' : r.status !== 'upcoming'
-  );
+  /**
+   * [a7] isLiveRes 로 가른다. status !== 'upcoming' 으로 가르면
+   *   승인 대기 중(pending)인 예약이 '지난 예약'으로 떨어진다.
+   *
+   * [a8] 정렬을 여기서 한다.
+   *   ───────────────────────────────────────────────────────
+   *   예전에는 정렬이 아예 없어서 /api/reservations 가 준 최신순을 그대로 그렸다.
+   *   그래서 '다가오는 예약' 맨 위에 가장 먼 날짜가 오고, 당장 오늘 갈 예약이
+   *   맨 아래에 있었다. 이 탭에서 손님이 찾는 것은 '다음에 갈 곳' 하나다.
+   *
+   *   두 탭은 방향이 반대다.
+   *     다가오는 — 오름차순. 곧 가야 할 것이 위
+   *     지난     — 내림차순. 최근에 다녀온 것이 위
+   *   지난 예약까지 오름차순으로 하면 몇 달 전 방문이 맨 위에 오고,
+   *   방금 다녀와서 리뷰를 쓰려는 예약이 맨 아래로 내려간다.
+   *
+   *   date 만 비교하면 같은 날 두 건(13:00 과 17:00)의 순서가 보장되지 않으므로
+   *   resAt() 으로 날짜와 시각을 합쳐서 본다.
+   */
+  const list = useMemo(() => {
+    const live = tab === 'upcoming';
+    return reservations
+      .filter((r) => (live ? isLiveRes(r.status) : !isLiveRes(r.status)))
+      .map((r) => ({ r, at: resAt(r.date, r.time).getTime() }))
+      .sort((a, b) => (live ? a.at - b.at : b.at - a.at))
+      .map((x) => x.r);
+  }, [reservations, tab]);
 
   return (
     <div className="absolute inset-0 bg-ink-50">
@@ -73,7 +99,13 @@ function ResCard({
         <div className="grow min-w-0">
           <div className="flex items-start gap-2">
             <span className="grow text-[15px] font-extrabold text-ink-900 truncate">{store?.name ?? '알 수 없는 매장'}</span>
-            {res.status === 'canceled' ? (
+            {/* [a7] 상태가 다섯 가지다. '확인 중'과 '확정'을 같은 배지로 보여 주면
+                손님은 매장이 이미 받아 준 줄 안다 */}
+            {res.status === 'pending' ? (
+              <Badge tone="warn" size="sm" solid>확인 중</Badge>
+            ) : res.status === 'rejected' ? (
+              <Badge tone="busy" size="sm">예약 불가</Badge>
+            ) : res.status === 'canceled' ? (
               <Badge tone="off" size="sm">취소됨</Badge>
             ) : past ? (
               <Badge tone="ink" size="sm">방문 완료</Badge>
@@ -87,6 +119,18 @@ function ResCard({
           <div className="text-[11.5px] font-bold text-ink-400 mt-0.5 tnum">
             {res.party}명 · {res.seatType}
           </div>
+
+          {res.status === 'pending' && (
+            <div className="mt-2 inline-flex items-center gap-1 h-7 px-2.5 rounded-full bg-warn-50 border border-warn-200 text-[11.5px] font-extrabold text-warn-700">
+              <Icon n="clock" s={12} />
+              매장에서 확인하고 있어요
+            </div>
+          )}
+          {res.status === 'rejected' && (
+            <div className="mt-2 text-[11.5px] font-bold text-busy-600 leading-snug">
+              {rejectReasonOf(res.rejectReason).title}
+            </div>
+          )}
 
           {canReview && (
             <div className="mt-2 inline-flex items-center gap-1 h-7 px-2.5 rounded-full bg-brand-50 border border-brand-200 text-[11.5px] font-extrabold text-brand-700">

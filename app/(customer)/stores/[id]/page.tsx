@@ -8,8 +8,7 @@ import { Badge, Button, Card, Gauge, LiveStamp } from '@/components/ui/primitive
 import { BottomSheet, NavSheet } from '@/components/ui/overlays';
 import { SubHeader, StickyCta } from '@/components/customer/Shell';
 import { cx, won } from '@/lib/format';
-import { levelOf, parkStats, seatStats } from '@/lib/status';
-import { MENUS } from '@/lib/mock';
+import { levelOf, parkVerdict, parkStats, seatStats } from '@/lib/status';
 import { useApp } from '@/lib/store';
 import RecordRecent from './RecordRecent';
 
@@ -36,6 +35,7 @@ export default function StoreDetailPage({ params }: { params: Promise<{ id: stri
   const ss = seatStats(store);
   const ps = parkStats(store);
   const lv = levelOf(ps);
+  const pv = parkVerdict(ps);
   const list = reviews.filter((r) => r.storeId === store.id);
   const fav = favorites.includes(store.id);
 
@@ -115,23 +115,28 @@ export default function StoreDetailPage({ params }: { params: Promise<{ id: stri
                 onClick={() => setParkOpen(true)}
                 className={cx(
                   'rounded-2xl border-2 bg-white p-3.5 text-left active:scale-[.98] transition-transform',
-                  ps.offline ? 'border-off-200' : ps.available === 0 ? 'border-busy-200' : 'border-ok-300'
+                  pv === 'unsure' ? 'border-off-200' : pv === 'full' ? 'border-busy-200' : 'border-ok-300'
                 )}
               >
                 <div className="flex items-center gap-1.5 mb-2">
-                  <Icon n={ps.offline ? 'sensor-off' : 'car'} s={15} cls={ps.offline ? 'text-off-500' : lv.num} />
-                  <span className={cx('text-[12px] font-extrabold', ps.offline ? 'text-off-600' : lv.num)}>
-                    {ps.offline ? '확인 불가' : lv.label}
+                  <Icon n={pv === 'unsure' ? 'sensor-off' : 'car'} s={15} cls={pv === 'unsure' ? 'text-off-500' : lv.num} />
+                  <span className={cx('text-[12px] font-extrabold', pv === 'unsure' ? 'text-off-600' : lv.num)}>
+                    {pv === 'unsure' ? '확인 불가' : lv.label}
                   </span>
                 </div>
                 <div className="flex items-baseline gap-1">
                   <span className="text-[28px] font-extrabold text-ink-900 leading-none tnum">
-                    {ps.offline ? '—' : ps.available}
+                    {/* 모르는 상태에서 0 을 크게 띄우면 만차로 읽힌다 */}
+                    {pv === 'unsure' ? '—' : ps.available}
                   </span>
                   <span className="text-[12px] font-bold text-ink-400 tnum">/ {ps.total}</span>
                 </div>
                 <div className="text-[11px] font-bold text-ink-500 mt-1.5">
-                  {ps.offline ? '잠시 후 다시 확인해 주세요' : '지금 주차 가능한 자리'}
+                  {ps.offline
+                    ? '잠시 후 다시 확인해 주세요'
+                    : pv === 'unsure'
+                    ? `${ps.unknown ?? 0}자리를 확인하고 있어요`
+                    : '지금 주차 가능한 자리'}
                 </div>
                 <div className="flex items-center gap-1 mt-2 text-[11.5px] font-extrabold text-brand-700">
                   주차 현황 보기 <Icon n="chevR" s={13} />
@@ -156,20 +161,51 @@ export default function StoreDetailPage({ params }: { params: Promise<{ id: stri
               ))}
             </Card>
 
-            {/* 대표 메뉴 */}
+            {/* 대표 메뉴
+                [a8] 예전에는 lib/mock.ts 의 MENUS 배열을 그렸다. 전 매장 공용이라
+                어느 매장을 열어도 두부두루치기·칼국수 같은 6개가 똑같이 나왔고,
+                매장 id 를 아예 보지 않았다. 정작 GET /api/stores/[id] 는
+                매장별 메뉴를 order 순으로 내려주고 있었다 — 받아 놓고 안 썼다.
+
+                store.menus 는 상세 응답이 도착해야 채워진다.
+                undefined(아직 모른다) 와 [](등록된 메뉴가 없다) 를 나눠서 그린다. */}
             <Card className="p-4">
               <div className="text-[13px] font-extrabold text-ink-900 mb-3">대표 메뉴</div>
-              <div className="space-y-2.5">
-                {MENUS.slice(0, 4).map(([name, price]) => (
-                  <div key={name} className="flex items-center gap-3">
-                    <div className={cx('w-14 h-14 rounded-xl bg-gradient-to-br shrink-0', store.hero)} />
-                    <div className="grow min-w-0">
-                      <div className="text-[13.5px] font-extrabold text-ink-900 truncate">{name}</div>
-                      <div className="text-[12.5px] font-bold text-ink-500 mt-0.5 tnum">{price}원</div>
+
+              {store.menus === undefined ? (
+                <div className="space-y-2.5">
+                  {Array.from({ length: 3 }, (_, i) => (
+                    <div key={i} className="flex items-center gap-3">
+                      <div className="w-14 h-14 rounded-xl bg-ink-100 animate-pulse shrink-0" />
+                      <div className="grow space-y-1.5">
+                        <div className="h-3.5 w-2/5 rounded bg-ink-100 animate-pulse" />
+                        <div className="h-3 w-1/4 rounded bg-ink-100 animate-pulse" />
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : store.menus.length === 0 ? (
+                <div className="text-[12.5px] font-medium text-ink-400 py-2">
+                  등록된 메뉴가 없어요
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {store.menus.slice(0, 4).map((m) => (
+                    <div key={m.id} className="flex items-center gap-3">
+                      <div className={cx('w-14 h-14 rounded-xl bg-gradient-to-br shrink-0', store.hero)} />
+                      <div className="grow min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[13.5px] font-extrabold text-ink-900 truncate">{m.name}</span>
+                          {m.signature && <Badge tone="brand" size="sm">대표</Badge>}
+                        </div>
+                        <div className="text-[12.5px] font-bold text-ink-500 mt-0.5 tnum">
+                          {m.price.toLocaleString('ko-KR')}원
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </Card>
 
             {/* 리뷰 */}
@@ -225,7 +261,7 @@ export default function StoreDetailPage({ params }: { params: Promise<{ id: stri
             <div className="grid grid-cols-3 gap-2 mb-4">
               {[
                 ['전체', ps.total, 'text-ink-900'],
-                ['주차 가능', ps.offline ? '—' : ps.available, 'text-ok-500'],
+                ['주차 가능', pv === 'unsure' ? '—' : ps.available, 'text-ok-500'],
                 ['주차 중', ps.offline ? '—' : ps.occupied, 'text-busy-500'],
               ].map(([l, v, c]) => (
                 <div key={l as string} className="rounded-xl bg-ink-50 py-3 text-center">
