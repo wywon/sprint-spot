@@ -14,7 +14,7 @@
  */
 
 import type {
-  AdminReservation, LogEntry, ParkingSlot, PartnerStore, RejectReasonCode, ResStatus,
+  AdminReservation, AdminResStatus, LogEntry, ParkingSlot, PartnerStore, RejectReasonCode, ResStatus,
   Reservation, SensorState, SlotStatus, StoreTable, TableStatus,
 } from './types';
 
@@ -205,7 +205,31 @@ export interface ApiAdminRes {
   createdAt: number;
 }
 
+/**
+ * [b10] 서버가 보낸 상태를 확인하고 받는다.
+ *
+ * ★ 캐스팅을 없앤 이유
+ *   전에는 (a.status as AdminReservation['status']) 였다. DB 는 7종을 보내는데
+ *   화면 타입은 4종이라, 거절·취소·방문 완료가 넷 중 하나인 척 통과했다.
+ *   TypeScript 는 캐스팅 앞에서 아무 말도 하지 않는다 — 우리가 "맞다고 치자"고
+ *   적어 준 것이기 때문이다. 그래서 화면에서 전부 「미방문」으로 보였다.
+ *
+ *   API 응답은 우리 코드가 아니라 서버가 주는 것이므로 타입이 아니라 값으로 확인해야 한다.
+ *   (adaptLog 의 tone 검증과 같은 방식)
+ *
+ * ★ 모르는 값이 오면 'pending'
+ *   가장 눈에 띄는 상태로 떨어뜨린다. 관리자가 "이게 뭐지" 하고 한 번 보게 만드는 쪽이,
+ *   조용히 「미방문」으로 묻히는 것보다 낫다. 상태가 또 늘면 여기서 걸린다.
+ */
+const ADMIN_RES_STATUSES: readonly string[] = [
+  'pending', 'upcoming', 'seated', 'done', 'noshow', 'canceled', 'rejected',
+];
+
 export function adaptAdminRes(a: ApiAdminRes): AdminReservation {
+  const status = ADMIN_RES_STATUSES.includes(a.status)
+    ? (a.status as AdminResStatus)
+    : 'pending';
+
   return {
     id: a.id,
     date: a.date,
@@ -213,8 +237,7 @@ export function adaptAdminRes(a: ApiAdminRes): AdminReservation {
     name: a.name,
     party: a.party,
     phone: a.phone,
-    // 화면이 아는 상태만 넘긴다. rejected·canceled 는 목록에서 이미 빠져 있다
-    status: (a.status as AdminReservation['status']) ?? 'pending',
+    status,
     memo: a.memo ?? '',
     seatType: a.seatType ?? '상관없음',
     eta: a.eta ?? '-',

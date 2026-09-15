@@ -209,7 +209,28 @@ export const HOLDING_STATUSES = ['pending', 'upcoming', 'seated'] as const;
  */
 export type RejectReasonCode = 'full' | 'party' | 'closed' | 'break' | 'etc';
 
-/** 관리자 화면의 오늘 예약 */
+/**
+ * 관리자 화면의 예약.
+ *
+ * ★ [b10] 상태를 DB(ReservationStatus) 7종과 맞췄다.
+ *   전에는 pending·upcoming·seated·noshow 넷뿐이었는데, 서버는 오늘 날짜의
+ *   '모든' 예약을 보낸다. 그래서 거절·취소·방문 완료가 넷 중 어디에도 못 들어가
+ *   화면에서 전부 「미방문」으로 보였다.
+ *
+ *   손님용 ResStatus 와 합치지 않는다. 저쪽에는 seated·noshow 가 없고
+ *   isLiveRes() 가 그 구분 위에 서 있다. 보는 사람이 다르면 타입도 다르다.
+ */
+export type AdminResStatus =
+  | 'pending' | 'upcoming' | 'seated' | 'done' | 'noshow' | 'canceled' | 'rejected';
+
+/**
+ * 아직 오늘 처리해야 할 예약인가.
+ * 홀 운영·대시보드·사이드바 세 군데가 같은 판단을 한다.
+ * 각자 손으로 비교하면 상태가 또 늘 때 같은 버그가 세 군데 생긴다. (isLiveRes 와 같은 이유)
+ */
+export const isOpenAdminRes = (s: AdminResStatus) =>
+  s === 'pending' || s === 'upcoming' || s === 'seated';
+
 export interface AdminReservation {
   id: string;
   time: string;
@@ -217,7 +238,7 @@ export interface AdminReservation {
   party: number;
   phone: string;
   /** [a7] pending = 승인 대기. 관리자 홀 운영 맨 위에 모아 보여 준다 */
-  status: 'pending' | 'upcoming' | 'seated' | 'noshow';
+  status: AdminResStatus;
   memo: string;
   eta: string;
   /** 좌석 유형·요청사항을 관리자가 보고 판단해야 승인을 결정할 수 있다 */
