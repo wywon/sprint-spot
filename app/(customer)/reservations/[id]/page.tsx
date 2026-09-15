@@ -6,11 +6,11 @@ import { Icon } from '@/components/ui/Icon';
 import { Badge, Button, Card, Segmented, LiveStamp } from '@/components/ui/primitives';
 import { ConfirmModal, NavSheet } from '@/components/ui/overlays';
 import { SubHeader, StickyCta } from '@/components/customer/Shell';
-import { cx, fmtDateK } from '@/lib/format';
+import { cx, fmtDateK, resAt, untilText } from '@/lib/format';
 import { levelOf, parkingOptions, type ParkingOption } from '@/lib/status';
 import { rejectReasonOf } from '@/lib/tokens';
 import { isLiveRes } from '@/lib/types';
-import { useApp } from '@/lib/store';
+import { useApp, useNow } from '@/lib/store';
 import ReceiptUpload from './ReceiptUpload';
 
 /**
@@ -30,6 +30,8 @@ export default function ReservationDetailPage({ params }: { params: Promise<{ id
   const { id } = use(params);
   const router = useRouter();
   const { getRes, getStore, lots, resLoaded, cancelReservation, uploadReceipt, pushToast } = useApp();
+  /* 1분마다면 충분하다. 초 단위로 줄어드는 숫자는 읽는 데 방해만 된다 */
+  const now = useNow(60_000);
 
   const [sort, setSort] = useState<'ai' | 'free' | 'near'>('ai');
   const [picked, setPicked] = useState<string | null>(null);
@@ -60,6 +62,9 @@ export default function ReservationDetailPage({ params }: { params: Promise<{ id
      '갈 수 있는 자리'가 아직 아닌데 길안내를 띄우면 손님이 출발한다. */
   const waiting = res.status === 'pending';
   const confirmed = res.status === 'upcoming';
+
+  /** 예약까지 남은 시간. 지났으면 null */
+  const until = now ? untilText(resAt(res.date, res.time).getTime() - now) : null;
 
   const options = parkingOptions(store ?? null, lots);
   const sorted = [...options].sort((a, b) => {
@@ -174,6 +179,16 @@ export default function ReservationDetailPage({ params }: { params: Promise<{ id
           {/* ── 다가오는 예약: 출발 알림 + 주차 현황 ── */}
           {confirmed && (
             <>
+              {/* 방문 안내
+                  [a8] 예전에는 "11시 52분에 출발하시면 딱 맞아요 · 차로 약 18분" 이
+                  글자로 박혀 있었다. 예약이 17시든 13시든 같은 문장이 떠서,
+                  바로 위에 적힌 예약 시각과 같은 화면 안에서 서로 모순됐다.
+
+                  ★ 이동 시간은 뺐다
+                    손님 위치를 모르고 경로 계산도 하지 않는다. '차로 18분' 은
+                    근거가 없는 숫자였다. 아는 것(예약까지 남은 시간)만 말하고,
+                    모르는 것은 손님이 직접 확인할 수 있게 아래 주차 현황으로 넘긴다.
+                    출발 시각 추천은 위치 권한과 길찾기가 붙은 뒤에 할 일이다. */}
               <Card className="p-4 border-2 border-brand-200 bg-brand-50">
                 <div className="flex items-start gap-2.5">
                   <span className="w-9 h-9 rounded-xl bg-brand-600 text-white grid place-items-center shrink-0">
@@ -181,11 +196,19 @@ export default function ReservationDetailPage({ params }: { params: Promise<{ id
                   </span>
                   <div>
                     <div className="text-[13px] font-extrabold text-brand-800">
-                      11시 52분에 출발하시면 딱 맞아요
+                      {/* now 가 0 이면 아직 마운트 전이다. 서버 렌더에서 시간을 계산하면
+                          hydration 이 어긋나므로 그때는 시각만 보여 준다 */}
+                      {!now
+                        ? `${fmtDateK(res.date)} ${res.time} 방문 예정이에요`
+                        : until
+                        ? `예약까지 ${until} 남았어요`
+                        : '예약 시간이 되었어요'}
                     </div>
                     <div className="text-[11.5px] font-medium text-brand-800/80 mt-1 leading-relaxed">
-                      차로 약 18분 걸려요. 출발하실 시간이 되면 알림을 보내드리고,
-                      그때 주차 여유가 있는 곳을 함께 추천해 드릴게요.
+                      {res.parkingAlert
+                        ? '방문 30분 전 주차 알림을 켜두셨어요. '
+                        : ''}
+                      출발하시기 전에 아래 주차 현황을 한 번 더 확인해 주세요.
                     </div>
                   </div>
                 </div>

@@ -48,3 +48,33 @@ export function fmtDateK(iso: string): string {
   const dow = ['일', '월', '화', '수', '목', '금', '토'][new Date(y, m - 1, d).getDay()];
   return `${m}월 ${d}일 (${dow})`;
 }
+
+/**
+ * [a8] 예약 시각 다루기
+ * ─────────────────────────────────────────────────────────────
+ * 예약은 'YYYY-MM-DD' 와 'HH:mm' 두 문자열로 저장된다. 시간대가 없다.
+ * 그대로 new Date('2026-09-17 17:00') 하면 그 코드가 도는 기계의 시간대를 따르므로
+ * 서버(UTC)와 브라우저(KST)가 9시간 다른 답을 낸다.
+ * +09:00 을 붙여 넘기면 어디서 계산해도 같은 순간을 가리킨다.
+ */
+export const resAt = (date: string, time: string) => new Date(`${date}T${time}:00+09:00`);
+
+/**
+ * 남은 시간을 사람이 읽는 문구로. 이미 지났으면 null.
+ *
+ * agoText() 의 반대 방향이다. 단위를 하나만 쓰지 않고 '2일 3시간' 처럼 두 개를
+ * 붙이는 이유는, 예약이 며칠 뒤일 때 '2일' 만 보여 주면 오늘인지 모레인지
+ * 손님이 날짜를 다시 세어야 하기 때문이다.
+ */
+export function untilText(ms: number): string | null {
+  if (ms <= 0) return null;
+  const m = Math.round(ms / 60_000);
+  if (m < 1) return '곧';
+  if (m < 60) return `${m}분`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  if (h < 24) return rm ? `${h}시간 ${rm}분` : `${h}시간`;
+  const d = Math.floor(h / 24);
+  const rh = h % 24;
+  return rh ? `${d}일 ${rh}시간` : `${d}일`;
+}

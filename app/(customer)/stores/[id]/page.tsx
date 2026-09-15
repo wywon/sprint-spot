@@ -9,7 +9,6 @@ import { BottomSheet, NavSheet } from '@/components/ui/overlays';
 import { SubHeader, StickyCta } from '@/components/customer/Shell';
 import { cx, won } from '@/lib/format';
 import { levelOf, parkVerdict, parkStats, seatStats } from '@/lib/status';
-import { MENUS } from '@/lib/mock';
 import { useApp } from '@/lib/store';
 import RecordRecent from './RecordRecent';
 
@@ -162,20 +161,51 @@ export default function StoreDetailPage({ params }: { params: Promise<{ id: stri
               ))}
             </Card>
 
-            {/* 대표 메뉴 */}
+            {/* 대표 메뉴
+                [a8] 예전에는 lib/mock.ts 의 MENUS 배열을 그렸다. 전 매장 공용이라
+                어느 매장을 열어도 두부두루치기·칼국수 같은 6개가 똑같이 나왔고,
+                매장 id 를 아예 보지 않았다. 정작 GET /api/stores/[id] 는
+                매장별 메뉴를 order 순으로 내려주고 있었다 — 받아 놓고 안 썼다.
+
+                store.menus 는 상세 응답이 도착해야 채워진다.
+                undefined(아직 모른다) 와 [](등록된 메뉴가 없다) 를 나눠서 그린다. */}
             <Card className="p-4">
               <div className="text-[13px] font-extrabold text-ink-900 mb-3">대표 메뉴</div>
-              <div className="space-y-2.5">
-                {MENUS.slice(0, 4).map(([name, price]) => (
-                  <div key={name} className="flex items-center gap-3">
-                    <div className={cx('w-14 h-14 rounded-xl bg-gradient-to-br shrink-0', store.hero)} />
-                    <div className="grow min-w-0">
-                      <div className="text-[13.5px] font-extrabold text-ink-900 truncate">{name}</div>
-                      <div className="text-[12.5px] font-bold text-ink-500 mt-0.5 tnum">{price}원</div>
+
+              {store.menus === undefined ? (
+                <div className="space-y-2.5">
+                  {Array.from({ length: 3 }, (_, i) => (
+                    <div key={i} className="flex items-center gap-3">
+                      <div className="w-14 h-14 rounded-xl bg-ink-100 animate-pulse shrink-0" />
+                      <div className="grow space-y-1.5">
+                        <div className="h-3.5 w-2/5 rounded bg-ink-100 animate-pulse" />
+                        <div className="h-3 w-1/4 rounded bg-ink-100 animate-pulse" />
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : store.menus.length === 0 ? (
+                <div className="text-[12.5px] font-medium text-ink-400 py-2">
+                  등록된 메뉴가 없어요
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {store.menus.slice(0, 4).map((m) => (
+                    <div key={m.id} className="flex items-center gap-3">
+                      <div className={cx('w-14 h-14 rounded-xl bg-gradient-to-br shrink-0', store.hero)} />
+                      <div className="grow min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[13.5px] font-extrabold text-ink-900 truncate">{m.name}</span>
+                          {m.signature && <Badge tone="brand" size="sm">대표</Badge>}
+                        </div>
+                        <div className="text-[12.5px] font-bold text-ink-500 mt-0.5 tnum">
+                          {m.price.toLocaleString('ko-KR')}원
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </Card>
 
             {/* 리뷰 */}
