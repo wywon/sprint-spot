@@ -147,8 +147,16 @@ export async function PATCH(
     if (resStatus && typeof body.reservationId === 'string') {
       await prisma.reservation.update({
         where: { id: body.reservationId },
-        data: { status: resStatus },
-      }).catch(() => {})   // 예약 없이 워크인으로 앉히는 경우도 있다
+        /* [b11] 앉힐 때는 어느 테이블에 앉았는지도 남긴다.
+           schema.prisma 주석은 "관리자가 입장시킬 때 채운다"인데 채우는 코드가 없었다.
+           취소·미방문은 자리를 안 잡았으므로 건드리지 않는다. */
+        data: action === 'seat'
+          ? { status: resStatus, tableId: id }
+          : { status: resStatus },
+      }).catch((e: unknown) => {
+        // 예약 없이 워크인으로 앉히는 경우도 있다. 테이블 변경까지 실패시키지는 않는다
+        console.error('[PATCH /api/admin/tables/[id]] reservation link', e)
+      })
     }
 
     /* [b9] 사람이 읽는 문장으로 남긴다.

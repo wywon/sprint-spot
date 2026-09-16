@@ -7,7 +7,7 @@ import { ConfirmModal } from '@/components/ui/overlays';
 import { AdminTopbar } from '@/components/admin/Sidebar';
 import { TableMap } from '@/components/admin/TableMap';
 import { cx } from '@/lib/format';
-import { ADMIN_STORE_ID, REJECT_REASONS, RES_ADMIN, TABLE } from '@/lib/tokens';
+import { ADMIN_STORE_ID, CLEAN_AUTO_MS, REJECT_REASONS, RES_ADMIN, TABLE } from '@/lib/tokens';
 import { useApp } from '@/lib/store';
 import { isOpenAdminRes, type AdminReservation, type RejectReasonCode, type StoreTable } from '@/lib/types';
 
@@ -25,9 +25,19 @@ import { isOpenAdminRes, type AdminReservation, type RejectReasonCode, type Stor
  *   미방문 처리는 시스템이 자동으로 한다. 관리자가 손으로 누르는 건
  *   손님이 전화로 못 온다고 알려온 경우이고, 그건 '취소'다.
  *
- * ★ 잘못 누름 방지 — 되돌릴 수 없는 동작(예약 취소, 이용 불가)만 확인 모달을 띄우고,
- *   되돌릴 수 있는 동작(입장/퇴장)은 토스트에 '되돌리기'를 붙인다.
+ * ★ 잘못 누름 방지 — 되돌릴 수 없는 동작(예약 취소, 이용 불가)만 확인 모달을 띄운다.
  *   모든 것에 모달을 띄우면 관리자가 확인 버튼을 기계적으로 누르게 되어 오히려 위험하다.
+ *
+ * ★ [b11] 토스트의 '되돌리기'를 뺐다.
+ *   화면만 되돌리고 서버에는 아무 요청도 가지 않았다 — occupied→available,
+ *   cleaning→occupied 는 서버 전이표(ALLOWED)에 없는 동작이다. 그래서 3초 뒤
+ *   폴링이 원래대로 덮어썼고, "5분 내 되돌릴 수 있어요"는 4초 뒤 사라지는 토스트였다.
+ *   잘못 입장시켰으면 퇴장을 누르면 된다(정리 40초 뒤 빈 자리).
+ *   토스트는 방금 일어난 일만 말한다.
+ *
+ * ★ [b11] 예약석 입장·취소는 예약 레코드와 같이 움직인다.
+ *   테이블만 occupied 로 바꾸면 Reservation 은 upcoming 으로 남아
+ *   10분 뒤 자동 미방문 처리되고, 손님 앱에 「미방문」이 뜬다.
  */
 export default function AdminHallPage() {
   const { getStore, setTable, adminRes, decideRes, pushToast } = useApp();
@@ -47,18 +57,89 @@ export default function AdminHallPage() {
 
   const table = sel ? store.tables.find((t) => t.id === sel) ?? null : null;
 
-  const act = (t: StoreTable, next: Partial<StoreTable>, label: string, tone: 'ok' | 'warn' | 'busy' | 'brand') => {
-    const prev: Partial<StoreTable> = {
-      status: t.status, guest: t.guest, since: t.since, resAt: t.resAt, resName: t.resName, resParty: t.resParty,
-    };
-    setTable(store.id, t.id, next, { who: '최영호', msg: `${t.seats}인석 ${label}`, tone });
-    pushToast({
-      title: label, desc: '5분 내 되돌릴 수 있어요', tone, icon: 'check',
-      actionLabel: '되돌리기',
-      onAction: () => setTable(store.id, t.id, prev, { who: '시스템', msg: '변경 취소', tone: 'off' }),
-    });
+  /**
+   * [b11] 이 예약석에 걸린 예약을 찾는다. 없으면 null.
+   *
+   * ① Reservation.tableId 가 이 테이블인 도착 예정 예약 — 서버가 준 연결이라 정확하다
+   * ② 테이블의 resName · resAt 과 이름 · 시각이 같은 도착 예정 예약
+   *
+   * ★ ①이 먼저인 이유
+   *   GET /api/stores/[id] 는 테이블의 resName · resAt 을 내려주지 않는다
+   *   (손님 앱도 읽는 공개 응답이라 예약자 이름을 실으면 안 된다).
+   *   lib/adapt.ts 는 그 값을 직전 화면 값에서 이어받는데, 첫 폴링의 직전 값은
+   *   목업 테이블(id 't4')이고 DB 테이블 id 는 's1_t4' 라 이어받을 게 없다.
+   *   그래서 실제 화면에서 resName 은 거의 항상 null 이고, ②만으로는 못 찾는다.
+   *   ②는 나중에 resName 이 제대로 내려오게 되면 그때 살아나는 보조 수단이다.
+   *
+   * ★ 도착 예정(upcoming)만 본다
+   *   이미 착석·취소·미방문인 예약에 또 입장을 걸면 서버가 상태를 뒤집어 버린다.
+   *   목록이 시각 순이므로 find 는 같은 테이블의 가장 이른 예약을 고른다.
+   */
+  const linkedRes = (t: StoreTable): AdminReservation | null => {
+    if (t.status !== 'reserved') return null;
+    const open = adminRes.filter((r) => r.status === 'upcoming');
+    return (
+      open.find((r) => r.tableId === t.id) ??
+      (t.resName && t.resAt
+        ? open.find((r) => r.name === t.resName && r.time === t.resAt)
+        : undefined) ??
+      null
+    );
+  };
+
+  /**
+   * 테이블 상태를 바꾸고, 방금 일어난 일만 토스트로 알린다.
+   * [b11] 되돌리기를 뺐다 — 위 파일 머리 주석 참고.
+   */
+  const act = (
+    t: StoreTable,
+    next: Partial<StoreTable>,
+    label: string,
+    tone: 'ok' | 'warn' | 'busy' | 'brand',
+    desc: string,
+    res?: AdminReservation | null,
+  ) => {
+    setTable(store.id, t.id, next, { who: '최영호', msg: `${t.seats}인석 ${label}`, tone }, res?.id ?? null);
+    pushToast(
+      tone === 'warn'
+        // 할 일이 남았다는 안내는 읽을 시간이 더 필요하다
+        ? { title: label, desc, tone, duration: 7000 }
+        : { title: label, desc, tone, icon: 'check' },
+    );
     setSel(null);
   };
+
+  /**
+   * [b11] 예약석 입장.
+   * 연결된 예약을 못 찾으면 테이블은 그대로 앉히되, 경고 토스트로 사실을 알린다.
+   * 조용히 넘어가면 10분 뒤 손님 앱에 「미방문」이 뜨는 원래 문제가 그대로 남는다.
+   */
+  const seatReserved = (t: StoreTable) => {
+    const res = linkedRes(t);
+    const guest = res?.party ?? t.resParty ?? 2;
+    const next: Partial<StoreTable> = { status: 'occupied', guest, since: '지금', resAt: null, resName: null, resParty: null };
+
+    if (res) {
+      act(t, next, '예약 손님 입장', 'ok', `${res.time} ${res.name}님 ${res.party}명 · 예약도 착석으로 바뀌어요`, res);
+    } else {
+      act(t, next, '입장 처리', 'warn', '연결된 예약을 찾지 못해 테이블만 바꿨어요. 예약 손님이면 오른쪽 오늘 예약에서 입장을 눌러 주세요');
+    }
+  };
+
+  /** [b11] 예약석 취소. 확인 모달의 "고객에게 취소 알림이 발송" 이 사실이 되려면 예약도 같이 바뀌어야 한다 */
+  const cancelReserved = (t: StoreTable) => {
+    const res = linkedRes(t);
+    const next: Partial<StoreTable> = { status: 'available', resAt: null, resName: null, resParty: null };
+
+    if (res) {
+      act(t, next, '예약 취소', 'busy', `${res.time} ${res.name}님 · 예약도 취소로 바뀌어요`, res);
+    } else {
+      act(t, next, '예약석 비움', 'warn', '연결된 예약을 찾지 못해 자리만 비웠어요. 예약이 남아 있으면 오른쪽 오늘 예약에서 취소를 눌러 주세요');
+    }
+  };
+
+  /** 선택한 예약석에 걸린 예약 — 패널 설명 줄에 쓴다 */
+  const selRes = table ? linkedRes(table) : null;
 
   return (
     <>
@@ -112,7 +193,12 @@ export default function AdminHallPage() {
                     </div>
                     <div className="text-[12px] font-bold text-ink-500 mt-1 tnum">
                       {table.status === 'occupied' && table.since ? `${table.since}부터 · ${table.guest}명`
-                        : table.status === 'reserved' ? `${table.resName} · ${table.resAt} · ${table.resParty}명`
+                        /* [b11] resName 은 실제 화면에서 거의 항상 null 이다 (linkedRes 주석).
+                           "null · null · null명" 이 뜨지 않게 연결된 예약에서 읽는다 */
+                        : table.status === 'reserved'
+                          ? selRes ? `${selRes.name} · ${selRes.time} · ${selRes.party}명`
+                            : table.resName && table.resAt ? `${table.resName} · ${table.resAt} · ${table.resParty ?? '-'}명`
+                            : '예약 정보를 찾지 못했어요'
                         : '비어 있음'}
                     </div>
                   </div>
@@ -120,7 +206,7 @@ export default function AdminHallPage() {
                   <div className="flex gap-2 shrink-0">
                     {(table.status === 'available' || table.status === 'cleaning') && (
                       <>
-                        <Button variant="ok" icon="people" onClick={() => act(table, { status: 'occupied', guest: table.seats, since: '지금' }, '입장 처리', 'ok')}>
+                        <Button variant="ok" icon="people" onClick={() => act(table, { status: 'occupied', guest: table.seats, since: '지금' }, '입장 처리', 'ok', `${table.code.toUpperCase()} · ${table.seats}명`)}>
                           입장
                         </Button>
                         <Button variant="outline" icon="ban" onClick={() => setConfirm({ type: 'disable', table })}>
@@ -129,13 +215,13 @@ export default function AdminHallPage() {
                       </>
                     )}
                     {table.status === 'occupied' && (
-                      <Button variant="primary" icon="check" onClick={() => act(table, { status: 'cleaning', guest: null, since: null, cleaningAt: Date.now() }, '퇴장 처리', 'brand')}>
+                      <Button variant="primary" icon="check" onClick={() => act(table, { status: 'cleaning', guest: null, since: null, cleaningAt: Date.now() }, '퇴장 처리', 'brand', `${table.code.toUpperCase()} · 정리 시간 ${CLEAN_AUTO_MS / 1000}초 뒤 빈 자리가 돼요`)}>
                         퇴장
                       </Button>
                     )}
                     {table.status === 'reserved' && (
                       <>
-                        <Button variant="ok" icon="people" onClick={() => act(table, { status: 'occupied', guest: table.resParty ?? 2, since: '지금', resAt: null, resName: null, resParty: null }, '예약 손님 입장', 'ok')}>
+                        <Button variant="ok" icon="people" onClick={() => seatReserved(table)}>
                           입장
                         </Button>
                         <Button variant="outline" onClick={() => setConfirm({ type: 'cancelRes', table })}>
@@ -144,7 +230,7 @@ export default function AdminHallPage() {
                       </>
                     )}
                     {table.status === 'disabled' && (
-                      <Button variant="ok" icon="check" onClick={() => act(table, { status: 'available' }, '이용 가능으로 변경', 'ok')}>
+                      <Button variant="ok" icon="check" onClick={() => act(table, { status: 'available' }, '이용 가능으로 변경', 'ok', `${table.code.toUpperCase()} · 손님 앱에서도 빈 자리로 보여요`)}>
                         다시 사용
                       </Button>
                     )}
@@ -376,8 +462,8 @@ export default function AdminHallPage() {
         onConfirm={() => {
           if (!confirm) return;
           const t = confirm.table;
-          if (confirm.type === 'disable') act(t, { status: 'disabled' }, '이용 불가로 변경', 'warn');
-          else act(t, { status: 'available', resAt: null, resName: null, resParty: null }, '예약 취소', 'busy');
+          if (confirm.type === 'disable') act(t, { status: 'disabled' }, '이용 불가로 변경', 'warn', `${t.code.toUpperCase()} · 손님 앱에서도 이용 불가로 보여요`);
+          else cancelReserved(t);
         }}
       />
     </>
