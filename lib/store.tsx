@@ -223,7 +223,18 @@ interface SpotApi {
 
   setSlot: (storeId: string, code: string, patch: Partial<ParkingSlot>, log?: LogInput) => void;
   setSlots: (storeId: string, slots: ParkingSlot[], log?: LogInput) => Promise<boolean>;
-  setTable: (storeId: string, tableId: string, patch: Partial<StoreTable>, log?: LogInput) => void;
+  /**
+   * [b11] reservationId — 예약석을 입장·취소시킬 때 그 예약의 id.
+   * 넘기면 서버가 테이블과 예약을 한 요청 안에서 같이 바꾼다.
+   * 안 넘기면 테이블만 바뀌고 예약은 upcoming 으로 남는다 → 10분 뒤 미방문 처리된다.
+   */
+  setTable: (
+    storeId: string,
+    tableId: string,
+    patch: Partial<StoreTable>,
+    log?: LogInput,
+    reservationId?: string | null,
+  ) => void;
   setTables: (storeId: string, tables: StoreTable[], log?: LogInput) => Promise<boolean>;
   setSensor: (storeId: string, sensor: SensorState) => void;
   /** [b4] 매장 기본 정보 수정 (관리자 · 매장 관리 > 매장 정보) */
@@ -902,7 +913,25 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
       void send(`/api/admin/slots/${slotId}`, body, '주차면 상태를 저장하지 못했어요');
     },
 
-    setTable: (storeId, tableId, patch, logInput) => {
+    /**
+     * [b11] 테이블 상태 변경 — PATCH /api/admin/tables/[id]
+     * ───────────────────────────────────────────────────────
+     * ★ 예약 id 를 같이 보낸다
+     *   전에는 { action } 만 보냈다. 서버 라우트는 body.reservationId 를 받으면
+     *   예약 상태까지 같이 바꾸도록 이미 만들어져 있었는데, 여기서 안 실어 보내서
+     *   예약석을 입장시켜도 Reservation 은 upcoming 그대로였다.
+     *   그러면 예약 시각 +10분에 sweepNoShow 가 미방문으로 바꾸고,
+     *   손님 앱에는 가게에 앉아 있는데 「미방문」이 뜬다.
+     *
+     * ★ 서버가 예약을 바꾸는 건 seat · cancel · noshow 셋뿐이다
+     *   다른 동작에 id 를 실어도 서버가 무시하지만, 괜한 오해를 부르지 않게 셋일 때만 싣는다.
+     *
+     * ★ 오른쪽 예약 목록도 먼저 바꾼다
+     *   decideRes 와 같은 이유다. 서버 응답을 기다리는 동안 목록에 「입장」 버튼이
+     *   남아 있으면 관리자가 한 번 더 누르고, 두 번째는 409 실패 토스트가 된다.
+     *   실패하면 send() 끝의 refresh 가 서버 값으로 되돌린다.
+     */
+    setTable: (storeId, tableId, patch, logInput, reservationId) => {
       const before = stores.find((s) => s.id === storeId)?.tables.find((t) => t.id === tableId);
 
       setStores((prev) =>
@@ -918,7 +947,28 @@ export function SpotProvider({ children }: { children: React.ReactNode }) {
 
       const action = toTableAction(before?.status, patch);
       if (!action) return;                                 // 상태가 안 바뀌는 변경
-      void send(`/api/admin/tables/${tableId}`, { action }, '테이블 상태를 저장하지 못했어요');
+
+      const RES_NEXT: Partial<Record<TableAction, AdminReservation['status']>> = {
+        seat: 'seated', cancel: 'canceled', noshow: 'noshow',
+      };
+      const resNext = RES_NEXT[action];
+      const linkRes = Boolean(reservationId && resNext);
+
+      if (linkRes) {
+        setAdminRes((prev) =>
+          prev.map((r) =>
+            r.id === reservationId
+              ? { ...r, status: resNext!, eta: '-', tableId: action === 'seat' ? tableId : r.tableId }
+              : r,
+          ),
+        );
+      }
+
+      void send(
+        `/api/admin/tables/${tableId}`,
+        linkRes ? { action, reservationId } : { action },
+        '테이블 상태를 저장하지 못했어요',
+      );
     },
 
    /* [b6] 배치도 통째 저장 — PUT /api/admin/layout

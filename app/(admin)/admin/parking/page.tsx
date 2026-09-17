@@ -28,7 +28,18 @@ import type { ParkingSlot } from '@/lib/types';
  * ★ 주차면 칸 크기를 줄이지 않는다.
  *   화면이 좁으면 가로 스크롤 + 전체화면 보기로 해결한다.
  *   칸이 작아지면 터치 정확도가 떨어져서 잘못 누르게 된다.
+ *
+ * ★ 「센서 상태 전환」 버튼은 개발 환경에서만 보인다.
+ *   setSensor 는 로컬 상태만 바꾸므로 3초 뒤 폴링이 원래 값으로 되돌린다.
+ *   배포본에서 누르면 "고장 났다가 저절로 나은" 것처럼 보이기 때문에 숨긴다.
+ *   개발 중에는 센서 오류 화면을 한 번에 확인하는 용도로 남겨 둔다.
  */
+
+/* process.env.NODE_ENV 는 빌드 시점에 문자열로 치환된다.
+   서버·클라이언트가 같은 값을 보므로 hydration 불일치가 없고,
+   프로덕션 빌드에서는 버튼 가지가 통째로 제거된다. */
+const SHOW_SENSOR_TOGGLE = process.env.NODE_ENV !== 'production';
+
 export default function AdminParkingPage() {
   const { getStore, setSlot, setSlots, setSensor, pushToast, addLog, log } = useApp();
   const now = useNow(1000);
@@ -124,7 +135,8 @@ export default function AdminParkingPage() {
               <Button variant="ghost" size="sm" onClick={cancelEdit}>취소</Button>
               <Button variant="primary" size="sm" icon="check" onClick={saveEdit}>배치 저장</Button>
             </div>
-          ) : (
+          ) : SHOW_SENSOR_TOGGLE ? (
+            // 개발 전용 — 배포본에서는 렌더하지 않는다 (위 주석 참고)
             <Button
               variant="outline" size="sm" icon="sensor-off" className="mr-2"
               onClick={() => {
@@ -140,7 +152,7 @@ export default function AdminParkingPage() {
             >
               센서 상태 전환
             </Button>
-          )
+          ) : null
         }
       />
 

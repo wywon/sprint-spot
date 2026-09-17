@@ -260,6 +260,13 @@ export interface AdminReservation {
   seatType?: string;
   date?: string;
   createdAt?: number;
+  /**
+   * [b11] 이 예약이 걸린 테이블. 없으면 null.
+   * 서버는 진작부터 내려주고 있었는데 adapt 에서 버리고 있었다.
+   * 홀 운영 배치도에서 예약석을 눌렀을 때 "이 테이블의 예약이 무엇인가"를
+   * 알 수 있는 유일한 연결 고리다 — 테이블의 resName·resAt 은 공개 API 가 안 준다.
+   */
+  tableId?: string | null;
 }
 
 export interface Review {
