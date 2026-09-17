@@ -3,6 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { Icon } from '@/components/ui/Icon';
+import { StorePhoto } from './Photo';
 import { Badge, LiveStamp } from '@/components/ui/primitives';
 import { cx, walkMin } from '@/lib/format';
 import { levelOf, parkVerdict, lotStats, parkStats, seatStats } from '@/lib/status';
@@ -137,7 +138,7 @@ export const StoreCard = ({
         {onClose && <CardBadgeBar>{badge}</CardBadgeBar>}
 
         <div className="flex gap-3">
-          <div className={cx('w-[68px] h-[68px] rounded-xl bg-gradient-to-br shrink-0', store.hero)} />
+          <StorePhoto store={store} className="w-[68px] h-[68px] rounded-xl shrink-0" />
           <div className="grow min-w-0 flex flex-col justify-center">
             <div className="flex items-start gap-2">
               <span className="grow min-w-0 text-[15px] font-extrabold text-ink-900 truncate">
@@ -275,7 +276,9 @@ export const FoodTile = ({
     href={store.partner ? `/stores/${store.id}` : `/explore?focus=${store.id}`}
     className="shrink-0 w-[164px] bg-white rounded-2xl border border-ink-200 shadow-card overflow-hidden active:scale-[.98] transition-transform"
   >
-    <div className={cx('h-[86px] bg-gradient-to-br', store.partner ? (store as PartnerStore).hero : 'from-ink-200 to-ink-300')} />
+    {store.partner
+      ? <StorePhoto store={store as PartnerStore} className="h-[86px] w-full" />
+      : <div className="h-[86px] bg-gradient-to-br from-ink-200 to-ink-300" />}
     <div className="p-3">
       <div className="text-[13.5px] font-extrabold text-ink-900 truncate">{store.name}</div>
       <div className="text-[11px] font-bold text-ink-500 mt-0.5 truncate">
