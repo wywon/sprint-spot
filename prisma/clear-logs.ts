@@ -37,17 +37,31 @@
  *
  *   정말 빈 화면에서 시작하고 싶으면 --empty 를 붙인다.
  *
- * ★ 지우는 표 두 개
- *   ActivityLog — 대시보드 '최근 변경' (위 일곱 곳이 쓴다)
- *   SensorLog   — 주차면 센서가 보고한 원시 기록. POST /api/detect 가 쌓는다
- *                 화면에는 아직 안 쓰이지만 같이 비운다. 안 그러면 계속 불어난다
+ * ★ 지우는 표는 ActivityLog 하나뿐이다
+ *   SensorLog 는 절대 지우지 않는다.
+ *
+ *   처음에는 "화면에 안 쓰이니 같이 비우자" 며 SensorLog 도 지웠는데, 그게 틀렸다.
+ *   매장 관리 → 이용 통계의 「센서 기반 혼잡도·이용패턴」이 이 표를 읽는다.
+ *   Prisma 모델이 아니라 원시 SQL(FROM "SensorLog")로 조회해서
+ *   prisma.sensorLog 로 검색했을 때 안 걸렸던 것이다.
+ *   지우면 아래 네 가지가 통째로 빈다.
+ *     시간대별 점유율 · 요일×시간 히트맵 · 평균 주차시간과 회전율 · 만차 횟수
+ *   화면에는 「센서 기록이 아직 없어요 · 주차면 10면 중 0면 집계」가 뜬다.
+ *
+ *   그리고 이 기록은 되살릴 방법이 없다. 실제 센서가 보고한 값이라 시드에 없고
+ *   지어낼 수도 없다. 센서를 다시 돌리는 것 말고는 방법이 없다.
+ *
+ *   SensorLog 는 화면에 직접 보이지 않으니 쌓여도 시연에 방해가 안 된다.
+ *   지워서 얻는 것보다 잃는 것이 크다.
  *
  * ★ 왜 DB 에 안전한가
- *   두 표를 가리키는 곳이 아무 데도 없다. 스키마에서 이 둘을 참조하는 것은
- *   Store 쪽의 목록(logs / sensorLogs)뿐이고, 그건 "이 매장의 로그들" 이라는
- *   역방향 연결이라 로그가 없어도 아무 문제가 없다.
- *   예약 · 테이블 · 주차면 · 매장은 이 스크립트가 건드리지 않는다.
- *   지워도 화면이 비지 않는다 — 대시보드에 「기록이 없어요」가 뜬다.
+ *   ActivityLog 를 가리키는 곳이 아무 데도 없다. 스키마에서 이 표를 참조하는 것은
+ *   Store 쪽의 목록(logs)뿐이고, 그건 "이 매장의 로그들" 이라는 역방향 연결이라
+ *   로그가 없어도 아무 문제가 없다.
+ *   예약 · 테이블 · 주차면 · 매장 · SensorLog 는 이 스크립트가 건드리지 않는다.
+ *
+ *   화면도 비지 않는다 — 기본 동작이 seed 의 5줄을 다시 넣는 것이고,
+ *   --empty 를 써도 대시보드에 「기록이 없어요」가 뜨게 이미 만들어져 있다.
  *
  * ★ 리허설 때마다 다시 쌓인다
  *   센서가 값을 보낼 때마다, 관리자가 버튼을 누를 때마다 한 줄씩 늘어난다.
@@ -81,7 +95,7 @@ async function main() {
 
   const [actBefore, senBefore] = await Promise.all([
     prisma.activityLog.count(),
-    prisma.sensorLog.count(),
+    prisma.sensorLog.count(),   // 지우지 않는다. 몇 줄인지만 보여 준다
   ]);
 
   /* 지우기 전에 무엇이 있었는지 보여 준다.
@@ -100,14 +114,11 @@ async function main() {
   } else {
     console.log('  최근 변경(ActivityLog) 0줄 — 이미 비어 있다');
   }
-  console.log(`  센서 원시 기록(SensorLog) ${senBefore}줄`);
+  console.log(`  센서 원시 기록(SensorLog) ${senBefore}줄 — 건드리지 않는다`);
 
-  const [act, sen] = await Promise.all([
-    prisma.activityLog.deleteMany(),
-    prisma.sensorLog.deleteMany(),
-  ]);
+  const act = await prisma.activityLog.deleteMany();
 
-  console.log(`\n  삭제  ActivityLog ${act.count}줄 · SensorLog ${sen.count}줄`);
+  console.log(`\n  삭제  ActivityLog ${act.count}줄`);
 
   /* 시드 5줄 되돌리기 */
   if (EMPTY) {
@@ -123,14 +134,16 @@ async function main() {
 
   /* 건드리지 않은 것들을 세어서 보여 준다.
      "로그 지웠는데 다른 게 날아간 거 아니야?" 를 눈으로 확인시키는 편이 빠르다 */
-  const [stores, tables, slots, res] = await Promise.all([
+  const [stores, tables, slots, res, sen] = await Promise.all([
     prisma.store.count(),
     prisma.storeTable.count(),
     prisma.parkingSlot.count(),
     prisma.reservation.count(),
+    prisma.sensorLog.count(),
   ]);
   console.log('\n  건드리지 않은 것');
   console.log(`    매장 ${stores} · 테이블 ${tables} · 주차면 ${slots} · 예약 ${res}`);
+  console.log(`    SensorLog ${sen}줄 — 이용 통계의 센서 혼잡도·히트맵이 이걸 읽는다`);
   console.log(
     EMPTY
       ? '\n  관리자 대시보드를 새로고침하면 「기록이 없어요」가 뜬다.'
