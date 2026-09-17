@@ -1,7 +1,6 @@
 import React from 'react';
 import { AdminSidebar } from '@/components/admin/Sidebar';
 import { Toaster } from '@/components/ui/overlays';
-import { ModeSwitch } from '@/components/ModeSwitch';
 import NoShowSweeper from '@/components/admin/NoShowSweeper'
 
 /**
@@ -15,11 +14,13 @@ import NoShowSweeper from '@/components/admin/NoShowSweeper'
  * ★ 로그인은 MVP 범위 밖이다.
  *   4주차에 붙일 때는 이 레이아웃 안에서 미들웨어 쿠키를 확인하고
  *   없으면 /admin/login 으로 보내는 방식이 가장 간단하다.
+ *
+ * [b13] 상단 개발 바(ModeSwitch)를 걷어냈다. 이유는 (customer)/layout.tsx 참고.
+ *   화면 전환은 주소로 한다 — 관리자 /admin · 손님 /explore
  */
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="h-screen flex flex-col bg-ink-50">
-      <ModeSwitch />
       <div className="grow flex overflow-hidden relative">
         <AdminSidebar />
         <main className="grow flex flex-col overflow-hidden">{children}</main>
