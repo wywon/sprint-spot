@@ -12,6 +12,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "relayout:s1": "tsx prisma/relayout-s1-parking.ts",
+    "reset:res": "tsx prisma/reset-demo-reservations.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {
