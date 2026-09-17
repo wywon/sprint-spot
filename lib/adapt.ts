@@ -264,6 +264,8 @@ export function adaptAdminRes(a: ApiAdminRes): AdminReservation {
     seatType: a.seatType ?? '상관없음',
     eta: a.eta ?? '-',
     createdAt: a.createdAt,
+    // [b11] 홀 운영이 예약석 ↔ 예약을 잇는 데 쓴다
+    tableId: a.tableId ?? null,
   };
 }
 
