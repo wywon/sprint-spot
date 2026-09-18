@@ -4,7 +4,8 @@ import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Icon } from '@/components/ui/Icon';
 import { Badge, Segmented, Empty, Button } from '@/components/ui/primitives';
-import { cx, fmtDateK, resAt } from '@/lib/format';
+import { StorePhoto } from '@/components/customer/Photo';
+import { fmtDateK, resAt } from '@/lib/format';
 import { useApp } from '@/lib/store';
 import { isLiveRes } from '@/lib/types';
 import type { Reservation } from '@/lib/types';
@@ -95,7 +96,7 @@ function ResCard({
       className="block bg-white rounded-2xl border border-ink-200 shadow-card p-3.5 active:scale-[.99] transition-transform"
     >
       <div className="flex gap-3">
-        <div className={cx('w-[68px] h-[68px] rounded-xl bg-gradient-to-br shrink-0', store?.hero ?? 'from-ink-200 to-ink-300')} />
+        <StorePhoto store={store} className="w-[68px] h-[68px] rounded-xl shrink-0" />
         <div className="grow min-w-0">
           <div className="flex items-start gap-2">
             <span className="grow text-[15px] font-extrabold text-ink-900 truncate">{store?.name ?? '알 수 없는 매장'}</span>

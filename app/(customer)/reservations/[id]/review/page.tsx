@@ -5,6 +5,7 @@ import { notFound, useRouter } from 'next/navigation';
 import { Icon } from '@/components/ui/Icon';
 import { Button, Card } from '@/components/ui/primitives';
 import { SubHeader, StickyCta } from '@/components/customer/Shell';
+import { StorePhoto } from '@/components/customer/Photo';
 import { cx, fmtDateK } from '@/lib/format';
 import { useApp } from '@/lib/store';
 
@@ -44,7 +45,7 @@ export default function WriteReviewPage({ params }: { params: Promise<{ id: stri
       <div className="absolute inset-0 pt-[92px] pb-[104px] overflow-y-auto no-sb">
         <div className="p-4 space-y-3">
           <Card className="p-4 flex items-center gap-3">
-            <div className={cx('w-14 h-14 rounded-xl bg-gradient-to-br shrink-0', store?.hero ?? 'from-ink-200 to-ink-300')} />
+            <StorePhoto store={store} className="w-14 h-14 rounded-xl shrink-0" />
             <div className="grow min-w-0">
               <div className="text-[14.5px] font-extrabold text-ink-900 truncate">{store?.name}</div>
               <div className="text-[11.5px] font-bold text-ink-500 mt-0.5 tnum">

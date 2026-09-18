@@ -147,6 +147,9 @@ export function adaptStoreDetail(a: ApiStoreDetail, prev?: PartnerStore): Partne
       name: m.name,
       price: m.price,
       signature: Boolean(m.signature),
+      // [b13] 서버가 아직 빈 문자열을 준다. 빈 값은 넘기지 않고 undefined 로 둬야
+      // menuImage() 가 '없다'와 '빈 주소'를 헷갈리지 않는다
+      img: m.image || undefined,
     })),
   };
 }

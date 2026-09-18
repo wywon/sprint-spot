@@ -7,6 +7,7 @@ import { Icon } from '@/components/ui/Icon';
 import { Badge, Button, Card, Gauge, LiveStamp } from '@/components/ui/primitives';
 import { BottomSheet, NavSheet } from '@/components/ui/overlays';
 import { SubHeader, StickyCta } from '@/components/customer/Shell';
+import { MenuPhoto, StorePhoto } from '@/components/customer/Photo';
 import { cx, won } from '@/lib/format';
 import { levelOf, parkVerdict, parkStats, seatStats } from '@/lib/status';
 import { useApp } from '@/lib/store';
@@ -44,8 +45,13 @@ export default function StoreDetailPage({ params }: { params: Promise<{ id: stri
       <RecordRecent id={store.id} />
       <div className="absolute inset-0 bg-ink-50">
         <div className="absolute inset-0 pb-[104px] overflow-y-auto no-sb">
-          {/* 히어로 */}
-          <div className={cx('h-[210px] bg-gradient-to-br relative', store.hero)}>
+          {/* 히어로
+              [b13] 사진을 절대배치 배경으로 깔고 그 위에 뒤로가기·즐겨찾기를 얹는다.
+              사진이 없으면 StorePhoto 가 예전 그라데이션을 그린다. */}
+          <div className="h-[210px] relative overflow-hidden">
+            <StorePhoto store={store} className="absolute inset-0 w-full h-full" />
+            {/* 사진이 밝으면 흰 버튼이 묻힌다. 위쪽만 살짝 어둡게 깐다 */}
+            <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-ink-900/25 to-transparent pointer-events-none" />
             <SubHeader
               transparent
               right={
@@ -192,7 +198,7 @@ export default function StoreDetailPage({ params }: { params: Promise<{ id: stri
                 <div className="space-y-2.5">
                   {store.menus.slice(0, 4).map((m) => (
                     <div key={m.id} className="flex items-center gap-3">
-                      <div className={cx('w-14 h-14 rounded-xl bg-gradient-to-br shrink-0', store.hero)} />
+                      <MenuPhoto menu={m} store={store} className="w-14 h-14 rounded-xl shrink-0" />
                       <div className="grow min-w-0">
                         <div className="flex items-center gap-1.5">
                           <span className="text-[13.5px] font-extrabold text-ink-900 truncate">{m.name}</span>
