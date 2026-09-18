@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { Badge, Button, Card, LiveStamp } from '@/components/ui/primitives';
 import { Modal } from '@/components/ui/overlays';
@@ -8,7 +8,7 @@ import { AdminTopbar } from '@/components/admin/Sidebar';
 import { SlotGrid, SlotLegend } from '@/components/admin/SlotGrid';
 import { cx, agoText } from '@/lib/format';
 import { ADMIN_STORE_ID, SLOT } from '@/lib/tokens';
-import { nextSlotCode, parkStats, slotStatus } from '@/lib/status';
+import { isParkingLog, nextSlotCode, parkStats, slotStatus } from '@/lib/status';
 import { useApp, useNow } from '@/lib/store';
 import type { ParkingSlot } from '@/lib/types';
 
@@ -123,6 +123,12 @@ export default function AdminParkingPage() {
   };
 
   const gridStore = edit && draft ? { ...store, parking: { ...store.parking, slots: draft } } : store;
+
+  /* [b13] 이 화면의 로그 카드는 주차면 기록만 보여 준다.
+     useApp().log 는 대시보드 '최근 변경' 과 같은 목록이라 테이블·예약 기록까지
+     들어 있다. 거르지 않으면 「센서가 보고한 변화와 손으로 지정한 기록이에요」라는
+     부제와 내용이 어긋난다. 가르는 기준은 lib/status.ts 의 isParkingLog 에 있다. */
+  const parkingLog = useMemo(() => log.filter(isParkingLog), [log]);
 
   return (
     <>
@@ -331,10 +337,10 @@ export default function AdminParkingPage() {
             </div>
 
             <div className="space-y-3 max-h-[560px] overflow-y-auto thin-sb pr-1">
-              {log.length === 0 ? (
+              {parkingLog.length === 0 ? (
                 <div className="py-8 text-center text-[12.5px] font-bold text-ink-400">기록이 없어요</div>
               ) : (
-                log.map((l, i) => (
+                parkingLog.map((l, i) => (
                   <div key={i} className="flex gap-2.5">
                     <span
                       className={cx(

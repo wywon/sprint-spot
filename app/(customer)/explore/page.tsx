@@ -188,11 +188,11 @@ function ExploreView() {
       <div className="absolute left-0 right-0 bottom-[76px] z-30 px-4 pb-3">
         {selStore ? (
           <div className="animate-popIn">
-            <StoreCard store={selStore} />
+            <StoreCard store={selStore} onClose={() => setSel(null)} />
           </div>
         ) : selLot ? (
           <div className="animate-popIn">
-            <LotCard lot={selLot} />
+            <LotCard lot={selLot} onClose={() => setSel(null)} />
           </div>
         ) : hintOff ? null : (
           <div className="bg-white/95 backdrop-blur-xl rounded-2xl border border-ink-200 shadow-pop pl-4 pr-2 py-3 flex items-center gap-2.5 animate-popIn">
@@ -225,16 +225,11 @@ function ExploreView() {
         )}
       </div>
 
-      {/* 선택 해제 */}
-      {sel && (
-        <button
-          onClick={() => setSel(null)}
-          className="absolute right-4 bottom-[190px] z-30 w-11 h-11 rounded-full bg-white shadow-pop border border-ink-200 grid place-items-center text-ink-500"
-          aria-label="선택 해제"
-        >
-          <Icon n="x" s={18} />
-        </button>
-      )}
+      {/* [b13] 떠 있던 '선택 해제' 버튼을 걷어냈다.
+          bottom-[190px] 는 StoreCard 높이(약 142px)에 맞춰 손으로 박은 좌표였는데,
+          그 자리가 정확히 카드 우상단 '입점' 배지 위였다.
+          카드 높이는 카드 종류와 글자 크기 설정에 따라 달라지므로 좌표로 피하는 대신
+          닫기 버튼 자체를 카드 안(components/customer/Cards.tsx 의 CardClose)으로 옮겼다. */}
     </div>
   );
 }

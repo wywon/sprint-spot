@@ -125,6 +125,13 @@ export interface MenuItem {
   /** 원 단위 숫자. 표시용 콤마는 화면에서 붙인다 */
   price: number;
   signature: boolean;
+  /**
+   * [b13] 메뉴 사진 주소. 지금은 DB 에 칼럼이 없어 항상 비어 있고,
+   * 화면은 lib/images.ts 가 메뉴 '이름'으로 찾아 준 그림을 쓴다.
+   * 나중에 매장이 사진을 올리는 기능이 붙으면 이 칸이 채워지고,
+   * menuImage() 가 이름 매칭보다 이 값을 먼저 쓴다.
+   */
+  img?: string;
 }
 
 /** 미입점 식당 — 지도에 상호명만 뜨고 예약 버튼이 비활성이다 */
