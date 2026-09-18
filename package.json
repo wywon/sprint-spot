@@ -14,6 +14,7 @@
     "relayout:s1": "tsx prisma/relayout-s1-parking.ts",
     "reset:res": "tsx prisma/reset-demo-reservations.ts",
     "reset:log": "tsx prisma/clear-logs.ts",
+    "seed:sensor": "tsx prisma/seed-sensor-history.ts",
     "reset:demo": "npm run reset:res && npm run reset:log",
     "postinstall": "prisma generate"
   },
