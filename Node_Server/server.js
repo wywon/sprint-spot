@@ -2,7 +2,7 @@
 // server.js
 // 주차장 서버. 이거 하나만 실행하면 된다.
 //
-//   1) Oracle 연결
+//   1) MySQL 연결 (실패해도 서버는 뜬다. MySQL 이 켜지면 자동 복구)
 //   2) 수집기 시작 (시리얼 → 파싱 → DB 저장)
 //   3) Express API 시작 (DB → GET /api/parking)
 //
@@ -25,7 +25,7 @@ require('dotenv').config({ quiet: true });
 
 const express = require('express');
 const cors = require('cors');
-const oracledb = require('oracledb');
+const mysql = require('mysql2/promise');
 
 const collector = require('./collector-core');
 const pusher = require('./pusher');
@@ -44,36 +44,29 @@ let pool = null;
 // DB 에서 현재 주차 현황 읽기
 // ==========================================
 const SELECT_SQL = `
-SELECT SPACE_NUMBER, OCCUPIED, UPDATED_AT
-  FROM PARKING_SPACES
- ORDER BY SPACE_NUMBER`;
+SELECT space_number, occupied, updated_at
+  FROM parking_spaces
+ ORDER BY space_number ASC`;
 
 async function getParkingStatus() {
-  const connection = await pool.getConnection();
+  // 풀에서 연결을 빌리고 돌려주는 일을 pool.execute 가 알아서 한다.
+  const [rows] = await pool.execute(SELECT_SQL);
 
-  try {
-    const result = await connection.execute(SELECT_SQL, [], {
-      outFormat: oracledb.OUT_FORMAT_OBJECT,
-    });
+  const spaces = rows.map((row) => ({
+    spaceNumber: row.space_number,
+    occupied: Boolean(row.occupied), // tinyint 0/1 → false/true
+    // 한국 시간(+09:00) 으로 내보낸다. UTC 의 Z 표기보다 눈으로 읽기 쉽다.
+    updatedAt: toKstIso(row.updated_at),
+  }));
 
-    const spaces = result.rows.map((row) => ({
-      spaceNumber: row.SPACE_NUMBER,
-      occupied: row.OCCUPIED === 1,
-      // 한국 시간(+09:00) 으로 내보낸다. UTC 의 Z 표기보다 눈으로 읽기 쉽다.
-      updatedAt: toKstIso(row.UPDATED_AT),
-    }));
+  const occupiedSpaces = spaces.filter((s) => s.occupied).length;
 
-    const occupiedSpaces = spaces.filter((s) => s.occupied).length;
-
-    return {
-      totalSpaces: TOTAL_SPACES,
-      occupiedSpaces: occupiedSpaces,
-      availableSpaces: TOTAL_SPACES - occupiedSpaces,
-      spaces: spaces,
-    };
-  } finally {
-    await connection.close();
-  }
+  return {
+    totalSpaces: TOTAL_SPACES,
+    occupiedSpaces: occupiedSpaces,
+    availableSpaces: TOTAL_SPACES - occupiedSpaces,
+    spaces: spaces,
+  };
 }
 
 // ==========================================
@@ -150,30 +143,23 @@ function requireToken(req, res, next) {
 // 주차면 하나의 상태를 바꾼다 (DB + 수집기 메모리)
 // ==========================================
 const UPDATE_ONE_SQL = `
-UPDATE PARKING_SPACES
-   SET OCCUPIED   = :occupied,
-       UPDATED_AT = SYSTIMESTAMP
- WHERE SPACE_NUMBER = :spaceNumber`;
+UPDATE parking_spaces
+   SET occupied   = ?,
+       updated_at = NOW()
+ WHERE space_number = ?`;
 
 async function setSpace(spaceNumber, occupied) {
-  const connection = await pool.getConnection();
+  // MySQL 은 자동 커밋이라 commit() 이 필요 없다. 한 줄 UPDATE 는 바로 저장된다.
+  const [result] = await pool.execute(UPDATE_ONE_SQL, [
+    occupied ? 1 : 0,
+    spaceNumber,
+  ]);
 
-  try {
-    const result = await connection.execute(UPDATE_ONE_SQL, {
-      occupied: occupied ? 1 : 0,
-      spaceNumber: spaceNumber,
-    });
+  // 수집기가 기억하는 값도 같이 맞춘다.
+  // 안 하면 센서 값이 바뀔 때까지 수집기가 이 칸을 무시한다.
+  collector.setKnownState(spaceNumber, occupied);
 
-    await connection.commit();
-
-    // 수집기가 기억하는 값도 같이 맞춘다.
-    // 안 하면 센서 값이 바뀔 때까지 수집기가 이 칸을 무시한다.
-    collector.setKnownState(spaceNumber, occupied);
-
-    return result.rowsAffected;
-  } finally {
-    await connection.close();
-  }
+  return result.affectedRows;
 }
 
 // ------------------------------------------
@@ -301,9 +287,7 @@ app.get('/api/health', async (req, res) => {
   let dbOk = false;
 
   try {
-    const connection = await pool.getConnection();
-    await connection.execute('SELECT 1 FROM DUAL');
-    await connection.close();
+    await pool.query('SELECT 1');
     dbOk = true;
   } catch (e) {
     dbOk = false;
@@ -367,7 +351,11 @@ app.use((req, res) => {
 async function main() {
   console.log('==========================================');
   console.log(' 주차장 서버');
-  console.log(' DB     :', process.env.DB_USER, '@', process.env.DB_CONNECT_STRING);
+  console.log(
+    ' DB     :',
+    process.env.DB_USER, '@',
+    `${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`
+  );
   if (API_ONLY) {
     console.log(' 수집기 : 사용 안 함 (--api-only)');
   } else if (USE_MOCK) {
@@ -380,19 +368,31 @@ async function main() {
 
   // ------------------------------------------
   // 1) DB. 여기서 실패하면 시작할 이유가 없다.
+  //
+  // mysql.createPool 은 만들기만 하고 실제로 접속하지 않는다.
+  // 그래서 SELECT 1 로 진짜 접속되는지 확인하고, 안 되면 종료한다.
+  // (서버가 이미 실행 중일 때 DB 가 멈추는 경우는 종료하지 않고 503 을 응답한다.)
   // ------------------------------------------
+  pool = mysql.createPool({
+    host: process.env.DB_HOST,
+    port: Number(process.env.DB_PORT) || 3306,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    waitForConnections: true,
+    connectionLimit: 4,
+    // DATETIME 에는 시간대 정보가 없다. MySQL 이 NOW() 로 한국 시간을
+    // 기록하므로, 읽을 때도 한국 시간으로 해석하라고 알려준다.
+    timezone: '+09:00',
+  });
+
   try {
-    pool = await oracledb.createPool({
-      user: process.env.DB_USER,
-      password: process.env.DB_PASSWORD,
-      connectString: process.env.DB_CONNECT_STRING,
-      poolMin: 1,
-      poolMax: 4,
-    });
-    console.log('[DB] 연결 준비 완료');
+    await pool.query('SELECT 1');
+    console.log('[DB] 연결 확인 완료');
   } catch (err) {
-    console.error('[DB] 연결 실패:', err.message);
-    console.error('→ .env 를 확인하고 node db-test.js 로 접속을 먼저 점검하세요.');
+    console.error('[DB] 연결 실패:', err.code || '', err.message);
+    console.error('→ .env 의 DB_ 설정과 MySQL84 서비스가 실행 중인지 확인한 뒤 다시 실행하세요.');
+    await pool.end().catch(() => {});
     process.exit(1);
   }
 
@@ -472,7 +472,7 @@ process.on('SIGINT', async () => {
   }
 
   try {
-    if (pool) await pool.close(2);
+    if (pool) await pool.end();
   } catch (e) {
     console.error('DB 종료 중 오류:', e.message);
   }
