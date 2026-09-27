@@ -1,10 +1,10 @@
 // ==========================================
 // db-reset.js
-// PARKING_SPACES 테이블을 통째로 지우고 새로 만든다.
+// parking_spaces 테이블을 통째로 지우고 새로 만든다.
 //
 // ⚠ 기존 데이터가 전부 사라진다. 되돌릴 수 없다.
 //
-// 실행: node db-reset.js --yes
+// 실행: node db-reset.js --yes   (또는 npm run db:reset)
 //   (--yes 없이 실행하면 아무것도 하지 않고 안내만 출력한다)
 // ==========================================
 
@@ -12,33 +12,30 @@
 
 require('dotenv').config({ quiet: true });
 
-const oracledb = require('oracledb');
+const mysql = require('mysql2/promise');
 const { toKstText } = require('./kst');
 
 const TOTAL_SPACES = 10;
-const TABLE_NAME = 'PARKING_SPACES';
+const TABLE_NAME = 'parking_spaces';
 
 // db-init.js 와 동일한 정의
 const CREATE_TABLE_SQL = `
-CREATE TABLE PARKING_SPACES (
-  SPACE_NUMBER  NUMBER(2)                NOT NULL,
-  OCCUPIED      NUMBER(1)  DEFAULT 0     NOT NULL,
-  UPDATED_AT    TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
-  CONSTRAINT PK_PARKING_SPACES      PRIMARY KEY (SPACE_NUMBER),
-  CONSTRAINT CK_PARKING_SPACE_NO    CHECK (SPACE_NUMBER BETWEEN 1 AND 10),
-  CONSTRAINT CK_PARKING_OCCUPIED    CHECK (OCCUPIED IN (0, 1))
+CREATE TABLE parking_spaces (
+    space_number INT PRIMARY KEY,
+    occupied BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 )`;
 
 const INSERT_SQL = `
-INSERT INTO PARKING_SPACES (SPACE_NUMBER, OCCUPIED, UPDATED_AT)
-VALUES (:num, 0, SYSTIMESTAMP)`;
+INSERT INTO parking_spaces (space_number, occupied, updated_at)
+VALUES (?, 0, NOW())`;
 
 // ------------------------------------------
 // 안전장치
 // ------------------------------------------
 if (!process.argv.includes('--yes')) {
   console.log('==========================================');
-  console.log(' ⚠ 이 명령은 PARKING_SPACES 테이블을');
+  console.log(' ⚠ 이 명령은 parking_spaces 테이블을');
   console.log('   통째로 삭제하고 새로 만듭니다.');
   console.log('   기존 데이터는 복구할 수 없습니다.');
   console.log('==========================================');
@@ -54,31 +51,36 @@ async function main() {
   let connection;
 
   try {
-    connection = await oracledb.getConnection({
+    connection = await mysql.createConnection({
+      host: process.env.DB_HOST,
+      port: Number(process.env.DB_PORT) || 3306,
       user: process.env.DB_USER,
       password: process.env.DB_PASSWORD,
-      connectString: process.env.DB_CONNECT_STRING,
+      database: process.env.DB_NAME,
+      timezone: '+09:00',
     });
 
     console.log('==========================================');
     console.log(' 테이블 초기화');
-    console.log(' 계정 :', process.env.DB_USER);
+    console.log(' 계정 :', process.env.DB_USER, '@', process.env.DB_NAME);
     console.log('==========================================\n');
 
     // ------------------------------------------
     // 1) 기존 테이블 삭제
     //
-    // PURGE 를 붙이면 휴지통(Recycle Bin)에 남지 않고 완전히 지워진다.
-    // 안 붙이면 BIN$... 이름으로 남아서 용량을 계속 차지한다.
+    // ※ MySQL 에서 DROP / CREATE TABLE 은 트랜잭션으로 되돌릴 수 없다.
+    //   실행 즉시 확정된다.
     // ------------------------------------------
-    const exists = await connection.execute(
-      `SELECT COUNT(*) AS CNT FROM USER_TABLES WHERE TABLE_NAME = :t`,
-      { t: TABLE_NAME },
-      { outFormat: oracledb.OUT_FORMAT_OBJECT }
+    const [exists] = await connection.execute(
+      `SELECT COUNT(*) AS cnt
+         FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = ?`,
+      [TABLE_NAME]
     );
 
-    if (exists.rows[0].CNT > 0) {
-      await connection.execute(`DROP TABLE ${TABLE_NAME} PURGE`);
+    if (exists[0].cnt > 0) {
+      await connection.query(`DROP TABLE ${TABLE_NAME}`);
       console.log(`· 기존 ${TABLE_NAME} 테이블을 삭제했습니다.`);
     } else {
       console.log(`· ${TABLE_NAME} 테이블이 없습니다. 삭제 건너뜁니다.`);
@@ -87,28 +89,31 @@ async function main() {
     // ------------------------------------------
     // 2) 새로 생성
     // ------------------------------------------
-    await connection.execute(CREATE_TABLE_SQL);
+    await connection.query(CREATE_TABLE_SQL);
     console.log(`· ${TABLE_NAME} 테이블을 새로 만들었습니다.`);
 
     // ------------------------------------------
-    // 3) 1~10번 행 넣기
+    // 3) 1~10번 행 넣기 (전부 들어가거나, 하나도 안 들어가거나)
     // ------------------------------------------
-    for (let n = 1; n <= TOTAL_SPACES; n++) {
-      await connection.execute(INSERT_SQL, { num: n });
+    await connection.beginTransaction();
+    try {
+      for (let n = 1; n <= TOTAL_SPACES; n++) {
+        await connection.execute(INSERT_SQL, [n]);
+      }
+      await connection.commit();
+    } catch (err) {
+      await connection.rollback().catch(() => {});
+      throw err;
     }
-
-    await connection.commit();
     console.log(`· 주차면 1~${TOTAL_SPACES}번 행을 넣었습니다.`);
 
     // ------------------------------------------
     // 4) 확인
     // ------------------------------------------
-    const rows = await connection.execute(
-      `SELECT SPACE_NUMBER, OCCUPIED, UPDATED_AT
-         FROM PARKING_SPACES
-        ORDER BY SPACE_NUMBER`,
-      [],
-      { outFormat: oracledb.OUT_FORMAT_OBJECT }
+    const [rows] = await connection.query(
+      `SELECT space_number, occupied, updated_at
+         FROM parking_spaces
+        ORDER BY space_number ASC`
     );
 
     console.log('\n현재 테이블 내용');
@@ -116,33 +121,34 @@ async function main() {
     console.log('번호  상태     갱신시각');
     console.log('------------------------------------------');
 
-    for (const row of rows.rows) {
-      const no = String(row.SPACE_NUMBER).padStart(2, ' ');
-      const status = row.OCCUPIED === 1 ? '주차중' : '빈자리';
-      console.log(`${no}    ${status}   ${toKstText(row.UPDATED_AT)}`);
+    for (const row of rows) {
+      const no = String(row.space_number).padStart(2, ' ');
+      const status = Boolean(row.occupied) ? '주차중' : '빈자리';
+      console.log(`${no}    ${status}   ${toKstText(row.updated_at)}`);
     }
 
     console.log('------------------------------------------');
-    console.log(`총 ${rows.rows.length}행\n`);
-    console.log('4단계 완료. 5단계(아두이노 데이터 저장)로 진행할 수 있습니다.');
+    console.log(`총 ${rows.length}행\n`);
+    console.log('초기화 완료. 서버가 켜져 있었다면 다시 실행하세요.');
   } catch (err) {
     console.error('\n❌ 실패');
-    console.error('  ' + err.message);
+    console.error('  ' + (err.code ? err.code + ' — ' : '') + err.message);
 
-    if (err.message.includes('ORA-01031')) {
-      console.error('  → 권한 부족. parking 계정에 RESOURCE 롤이 있는지 확인하세요.');
-    } else if (err.message.includes('ORA-01950')) {
-      console.error('  → SYSTEM 으로: ALTER USER parking QUOTA UNLIMITED ON USERS;');
-    } else if (err.message.includes('ORA-00054')) {
+    if (err.code === 'ER_TABLEACCESS_DENIED_ERROR' || err.code === 'ER_DBACCESS_DENIED_ERROR') {
+      console.error('  → 권한 부족. parking_user 에 CREATE, DROP 권한이 있는지 확인하세요.');
+      console.error('     root 로: SHOW GRANTS FOR \'parking_user\'@\'localhost\';');
+    } else if (err.code === 'ER_LOCK_WAIT_TIMEOUT') {
       console.error('  → 다른 프로그램이 테이블을 쓰고 있습니다.');
-      console.error('     SQL Developer 나 다른 node 창을 닫고 다시 실행하세요.');
+      console.error('     서버(node)나 MySQL Workbench 를 닫고 다시 실행하세요.');
+    } else if (err.code === 'ECONNREFUSED') {
+      console.error('  → MySQL 이 꺼져 있습니다. Get-Service MySQL84 로 확인하세요.');
     }
 
     process.exitCode = 1;
   } finally {
     if (connection) {
       try {
-        await connection.close();
+        await connection.end();
       } catch (e) {
         console.error('연결 닫기 실패:', e.message);
       }
