@@ -1,6 +1,6 @@
 // ==========================================
 // collector-core.js
-// 시리얼 → 파싱 → Oracle 저장 담당. 모듈이라 직접 실행하지 않는다.
+// 시리얼 → 파싱 → MySQL 저장 담당. 모듈이라 직접 실행하지 않는다.
 //
 // 두 곳에서 쓴다.
 //   · collector.js  — 수집기만 따로 돌릴 때
@@ -16,7 +16,7 @@
 
 const { SerialPort } = require('serialport');
 const { ReadlineParser } = require('@serialport/parser-readline');
-const oracledb = require('oracledb');
+const mysql = require('mysql2/promise');
 
 const { parseParkingLine, summarize, toDisplayString, TOTAL_SPACES } = require('./parser');
 const { nowKstIso } = require('./kst');
@@ -63,35 +63,27 @@ const stats = {
 // 프로그램을 다시 켰을 때 이미 맞는 값을 또 쓰지 않기 위해 필요하다.
 // ==========================================
 async function loadKnownState() {
-  const connection = await pool.getConnection();
+  const [rows] = await pool.execute(
+    `SELECT space_number, occupied
+       FROM parking_spaces
+      ORDER BY space_number ASC`
+  );
 
-  try {
-    const result = await connection.execute(
-      `SELECT SPACE_NUMBER, OCCUPIED
-         FROM PARKING_SPACES
-        ORDER BY SPACE_NUMBER`,
-      [],
-      { outFormat: oracledb.OUT_FORMAT_OBJECT }
+  if (rows.length !== TOTAL_SPACES) {
+    throw new Error(
+      `parking_spaces 행이 ${rows.length}개입니다. ` +
+      `${TOTAL_SPACES}개여야 합니다. 1~10번 초기 데이터를 먼저 넣으세요.`
     );
-
-    if (result.rows.length !== TOTAL_SPACES) {
-      throw new Error(
-        `PARKING_SPACES 행이 ${result.rows.length}개입니다. ` +
-        `${TOTAL_SPACES}개여야 합니다. node db-init.js 를 먼저 실행하세요.`
-      );
-    }
-
-    for (const row of result.rows) {
-      knownState[row.SPACE_NUMBER - 1] = row.OCCUPIED === 1;
-    }
-
-    console.log('[수집기] DB 현재 상태를 읽었습니다.');
-    console.log('[수집기] ' + toDisplayString(
-      knownState.map((occ, i) => ({ spaceNumber: i + 1, occupied: occ }))
-    ));
-  } finally {
-    await connection.close();
   }
+
+  for (const row of rows) {
+    knownState[row.space_number - 1] = Boolean(row.occupied);
+  }
+
+  console.log('[수집기] DB 현재 상태를 읽었습니다.');
+  console.log('[수집기] ' + toDisplayString(
+    knownState.map((occ, i) => ({ spaceNumber: i + 1, occupied: occ }))
+  ));
 }
 
 // ==========================================
@@ -103,10 +95,10 @@ async function loadKnownState() {
 //   "언제부터 주차중이었나" 를 알 수 없게 된다.
 // ==========================================
 const UPDATE_SQL = `
-UPDATE PARKING_SPACES
-   SET OCCUPIED   = :occupied,
-       UPDATED_AT = SYSTIMESTAMP
- WHERE SPACE_NUMBER = :spaceNumber`;
+UPDATE parking_spaces
+   SET occupied   = ?,
+       updated_at = NOW()
+ WHERE space_number = ?`;
 
 async function applyChanges(spaces) {
   const changes = [];
@@ -120,17 +112,24 @@ async function applyChanges(spaces) {
 
   if (changes.length === 0) return [];
 
+  // 트랜잭션: 바뀐 칸이 여러 개면 전부 저장되거나, 하나도 저장되지 않는다.
+  // MySQL 은 기본이 자동 커밋이라 이걸 안 하면 UPDATE 마다 바로 저장되어
+  // 중간에 실패했을 때 일부만 남을 수 있다.
+  // 같은 연결 안에서 해야 하므로 pool.execute 가 아니라 연결을 하나 빌린다.
   const connection = await pool.getConnection();
 
   try {
-    for (const c of changes) {
-      await connection.execute(UPDATE_SQL, {
-        occupied: c.to ? 1 : 0,
-        spaceNumber: c.spaceNumber,
-      });
-    }
+    await connection.beginTransaction();
 
-    await connection.commit();
+    try {
+      for (const c of changes) {
+        await connection.execute(UPDATE_SQL, [c.to ? 1 : 0, c.spaceNumber]);
+      }
+      await connection.commit();
+    } catch (err) {
+      await connection.rollback().catch(() => {});
+      throw err;
+    }
 
     // DB 반영에 성공한 뒤에만 메모리 상태를 갱신한다.
     // 실패했는데 갱신해버리면 그 변화를 영원히 놓친다.
@@ -143,7 +142,7 @@ async function applyChanges(spaces) {
 
     return changes;
   } finally {
-    await connection.close();
+    connection.release(); // 연결을 풀에 돌려준다 (끊는 게 아니다)
   }
 }
 
@@ -301,12 +300,15 @@ async function start(options = {}) {
     pool = options.pool;
     ownsPool = false;
   } else {
-    pool = await oracledb.createPool({
+    pool = mysql.createPool({
+      host: process.env.DB_HOST,
+      port: Number(process.env.DB_PORT) || 3306,
       user: process.env.DB_USER,
       password: process.env.DB_PASSWORD,
-      connectString: process.env.DB_CONNECT_STRING,
-      poolMin: 1,
-      poolMax: 4,
+      database: process.env.DB_NAME,
+      waitForConnections: true,
+      connectionLimit: 4,
+      timezone: '+09:00',
     });
     ownsPool = true;
   }
@@ -337,7 +339,7 @@ async function stop() {
   }
 
   if (pool && ownsPool) {
-    await pool.close(2);
+    await pool.end();
   }
 
   started = false;

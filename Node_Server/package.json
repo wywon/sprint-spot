@@ -1,7 +1,7 @@
 {
   "name": "node_server",
   "version": "1.0.0",
-  "description": "아두이노 주차장 서버 — Serial → Oracle → REST API",
+  "description": "아두이노 주차장 서버 — Serial → MySQL → REST API",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -25,7 +25,7 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "oracledb": "^7.0.1",
+    "mysql2": "^3.24.4",
     "serialport": "^13.0.0"
   }
 }

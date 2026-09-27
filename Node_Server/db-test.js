@@ -1,35 +1,37 @@
 // ==========================================
 // db-test.js
-// 3단계: Oracle 접속만 확인한다. 테이블 생성, 저장 없음.
+// MySQL 접속만 확인한다. 테이블 생성, 저장 없음.
 //
-// 실행: node db-test.js
+// 실행: node db-test.js   (또는 npm run db:test)
 //
 // .env 에 다음이 채워져 있어야 한다.
-//   DB_USER=
+//   DB_HOST=localhost
+//   DB_PORT=3306
+//   DB_USER=parking_user
 //   DB_PASSWORD=
-//   DB_CONNECT_STRING=localhost:1521/XEPDB1
-//
-// node-oracledb 6 이상은 Thin 모드가 기본이라
-// Oracle Instant Client 를 따로 설치하지 않아도 된다.
+//   DB_NAME=parking_db
 // ==========================================
 
 'use strict';
 
 require('dotenv').config({ quiet: true });
 
-const oracledb = require('oracledb');
+const mysql = require('mysql2/promise');
 
+const DB_HOST = process.env.DB_HOST;
+const DB_PORT = Number(process.env.DB_PORT) || 3306;
 const DB_USER = process.env.DB_USER;
 const DB_PASSWORD = process.env.DB_PASSWORD;
-const DB_CONNECT_STRING = process.env.DB_CONNECT_STRING;
+const DB_NAME = process.env.DB_NAME;
 
 // ------------------------------------------
 // 설정 확인
 // ------------------------------------------
 const missing = [];
+if (!DB_HOST) missing.push('DB_HOST');
 if (!DB_USER) missing.push('DB_USER');
 if (!DB_PASSWORD) missing.push('DB_PASSWORD');
-if (!DB_CONNECT_STRING) missing.push('DB_CONNECT_STRING');
+if (!DB_NAME) missing.push('DB_NAME');
 
 if (missing.length > 0) {
   console.error('[오류] .env 에 다음 항목이 비어 있습니다:', missing.join(', '));
@@ -38,67 +40,70 @@ if (missing.length > 0) {
 }
 
 console.log('==========================================');
-console.log(' Oracle 접속 테스트 (3단계)');
+console.log(' MySQL 접속 테스트');
 console.log(' 계정   :', DB_USER);
-console.log(' 접속   :', DB_CONNECT_STRING);
+console.log(' 접속   :', `${DB_HOST}:${DB_PORT}/${DB_NAME}`);
 console.log(' 비밀번호: (' + DB_PASSWORD.length + '자, 화면에 표시하지 않음)');
 console.log('==========================================\n');
 
 // ------------------------------------------
-// 오류 메시지를 초보자용 안내로 바꿔준다
+// 오류 코드를 초보자용 안내로 바꿔준다
 // ------------------------------------------
-function explain(message) {
+function explain(err) {
+  const code = err.code || '';
+  const message = err.message || '';
+
   const hints = [
     {
-      match: ['ORA-01017', 'invalid username'],
+      match: ['ECONNREFUSED'],
+      text: [
+        'MySQL 서버에 연결할 수 없습니다. MySQL 이 꺼져 있을 가능성이 큽니다.',
+        '→ PowerShell 에서 확인: Get-Service MySQL84',
+        '   Status 가 Running 이어야 합니다.',
+        '→ 꺼져 있으면 관리자 PowerShell 에서: Start-Service MySQL84',
+        '→ .env 의 DB_HOST / DB_PORT(3306) 도 확인하세요.',
+      ],
+    },
+    {
+      match: ['ER_ACCESS_DENIED_ERROR'],
       text: [
         '계정명 또는 비밀번호가 틀렸습니다.',
         '→ .env 의 DB_USER / DB_PASSWORD 를 확인하세요.',
-        '→ 비밀번호에 특수문자가 있으면 따옴표 없이 그대로 적어야 합니다.',
+        '→ 비밀번호는 따옴표 없이 그대로 적어야 합니다.',
       ],
     },
     {
-      match: ['ORA-12541', 'no listener', 'ECONNREFUSED', 'DPY-6005'],
+      match: ['ER_BAD_DB_ERROR'],
       text: [
-        'Oracle 리스너에 연결할 수 없습니다. DB가 꺼져 있을 가능성이 큽니다.',
-        '→ 서비스 확인: Win+R → services.msc',
-        '   OracleServiceXE 와 OracleOraDB21Home1TNSListener 가 "실행 중" 이어야 합니다.',
-        '→ 또는 관리자 cmd 에서: net start OracleServiceXE',
+        'DB_NAME 에 적힌 데이터베이스가 없습니다.',
+        '→ root 로 접속해서: CREATE DATABASE parking_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;',
       ],
     },
     {
-      match: ['ORA-12514', 'DPY-6001', 'unknown service'],
+      match: ['ER_DBACCESS_DENIED_ERROR'],
       text: [
-        '서비스 이름을 찾을 수 없습니다.',
-        '→ XE 21c 는 보통 localhost:1521/XEPDB1 입니다.',
-        '→ 확인: cmd 에서 lsnrctl status 실행 후 Service 목록을 보세요.',
+        '이 계정에 해당 데이터베이스 권한이 없습니다.',
+        '→ create-parking-user.sql 의 GRANT 부분을 root 로 다시 실행하세요.',
       ],
     },
     {
-      match: ['ORA-28000', 'account is locked'],
+      match: ['ER_NOT_SUPPORTED_AUTH_MODE', 'AUTH_SWITCH', 'authentication plugin'],
       text: [
-        '계정이 잠겨 있습니다.',
-        '→ SYSTEM 으로 접속해서: ALTER USER 계정명 ACCOUNT UNLOCK;',
-      ],
-    },
-    {
-      match: ['ORA-28001', 'password has expired'],
-      text: [
-        '비밀번호가 만료되었습니다.',
-        '→ SYSTEM 으로 접속해서: ALTER USER 계정명 IDENTIFIED BY 새비밀번호;',
+        '인증 방식(Authentication plugin) 문제입니다.',
+        '→ npm ls mysql2 로 버전을 확인하세요. 3.x 여야 합니다.',
       ],
     },
     {
       match: ['ETIMEDOUT', 'timeout'],
       text: [
-        '응답이 없습니다. 방화벽이나 DB 기동 중일 수 있습니다.',
+        '응답이 없습니다. MySQL 이 시작 중이거나 주소가 틀렸을 수 있습니다.',
         '→ 잠시 후 다시 시도하고, 그래도 안 되면 서비스 상태를 확인하세요.',
       ],
     },
   ];
 
   for (const h of hints) {
-    if (h.match.some((m) => message.includes(m))) {
+    if (h.match.some((m) => code === m || message.includes(m))) {
       return h.text;
     }
   }
@@ -115,42 +120,67 @@ async function main() {
   try {
     console.log('접속 시도 중...');
 
-    connection = await oracledb.getConnection({
+    connection = await mysql.createConnection({
+      host: DB_HOST,
+      port: DB_PORT,
       user: DB_USER,
       password: DB_PASSWORD,
-      connectString: DB_CONNECT_STRING,
+      database: DB_NAME,
+      timezone: '+09:00',
     });
 
     console.log('\n✅ 접속 성공\n');
 
-    // 서버 정보 (권한 없이도 확인 가능)
-    console.log(' Oracle 서버 버전 :', connection.oracleServerVersionString);
-    console.log(' 드라이버 모드     :', oracledb.thin ? 'Thin (Instant Client 불필요)' : 'Thick');
+    // DATE_FORMAT 으로 글자 그대로 받아서 시간대 변환이 끼어들지 않게 한다
+    const [rows] = await connection.query(
+      `SELECT VERSION()      AS version,
+              CURRENT_USER() AS db_user,
+              DATABASE()     AS db_name,
+              DATE_FORMAT(NOW(),           '%Y-%m-%d %H:%i:%s') AS now_local,
+              DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%d %H:%i:%s') AS now_utc,
+              TIMESTAMPDIFF(HOUR, UTC_TIMESTAMP(), NOW())       AS offset_hours`
+    );
+    const r = rows[0];
 
-    // 아주 단순한 쿼리 하나
-    const result = await connection.execute(
-      `SELECT USER AS db_user,
-              TO_CHAR(SYSTIMESTAMP, 'YYYY-MM-DD HH24:MI:SS') AS now
-         FROM DUAL`,
-      [],
-      { outFormat: oracledb.OUT_FORMAT_OBJECT }
+    console.log(' MySQL 서버 버전   :', r.version);
+    console.log(' 접속된 계정       :', r.db_user);
+    console.log(' 사용 중인 DB      :', r.db_name);
+    console.log(' DB 서버 시각      :', r.now_local);
+    console.log(' UTC 시각          :', r.now_utc);
+
+    // updated_at = NOW() 가 한국 시간이어야 API 의 +09:00 이 맞는다
+    if (Number(r.offset_hours) === 9) {
+      console.log(' 시간대            : 한국 시간(UTC+9) ✅');
+    } else {
+      console.warn(` 시간대            : UTC+${r.offset_hours} ⚠`);
+      console.warn('   → MySQL 의 NOW() 가 한국 시간이 아닙니다. API 의 updatedAt 이 어긋납니다.');
+      console.warn('   → Windows 시간대가 "(UTC+09:00) 서울" 인지 확인하세요.');
+    }
+
+    // 테이블이 준비됐는지도 같이 알려준다 (없어도 실패로 보지 않는다)
+    const [tables] = await connection.query(
+      `SELECT COUNT(*) AS cnt
+         FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'parking_spaces'`
+    );
+    console.log(
+      ' parking_spaces    :',
+      tables[0].cnt > 0 ? '있음' : '없음 → npm run db:init 을 실행하세요'
     );
 
-    console.log(' 접속된 계정       :', result.rows[0].DB_USER);
-    console.log(' DB 서버 시각      :', result.rows[0].NOW);
-
-    console.log('\n3단계 완료. 4단계(테이블 생성)로 진행할 수 있습니다.');
+    console.log('\n접속 확인 완료.');
   } catch (err) {
     console.error('\n❌ 접속 실패\n');
     console.error('원본 메시지:');
-    console.error('  ' + err.message);
+    console.error('  ' + (err.code ? err.code + ' — ' : '') + err.message);
     console.error('\n확인할 것:');
-    explain(err.message).forEach((line) => console.error('  ' + line));
+    explain(err).forEach((line) => console.error('  ' + line));
     process.exitCode = 1;
   } finally {
     if (connection) {
       try {
-        await connection.close();
+        await connection.end();
         console.log('\n(연결을 닫았습니다)');
       } catch (e) {
         console.error('연결 닫기 실패:', e.message);

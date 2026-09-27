@@ -1,6 +1,6 @@
 // ==========================================
 // collector.js
-// 수집기만 따로 돌린다. (시리얼 → 파싱 → Oracle 저장)
+// 수집기만 따로 돌린다. (시리얼 → 파싱 → MySQL 저장)
 //
 // 실행: node collector.js           아두이노 있을 때
 //       node collector.js --mock    아두이노 없을 때
@@ -31,7 +31,11 @@ async function main() {
     console.log(' 시리얼 :', process.env.SERIAL_PORT, '/',
                 Number(process.env.BAUD_RATE) || 9600);
   }
-  console.log(' DB     :', process.env.DB_USER, '@', process.env.DB_CONNECT_STRING);
+  console.log(
+    ' DB     :',
+    process.env.DB_USER, '@',
+    `${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`
+  );
   console.log(' 종료   : Ctrl + C');
   console.log('==========================================\n');
 
